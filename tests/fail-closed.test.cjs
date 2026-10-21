@@ -609,6 +609,152 @@ test("parseFixtures rejects unknown key on top-level typed argument", () => {
   );
 });
 
+test("parseFixtures rejects invalid address value in a vec element with precise path", () => {
+  const json = JSON.stringify({
+    contracts: [
+      {
+        wasm_path: "contract.wasm",
+        invocations: [
+          {
+            function_name: "hello",
+            args: [
+              {
+                type: "vec",
+                value: [{ type: "address", value: "notanaddress" }],
+              },
+            ],
+          },
+        ],
+      },
+    ],
+  });
+  assert.throws(
+    () => parseFixtures(json, "fixtures.json"),
+    (err) => {
+      assert.match(err.message, /Invalid WeighIn configuration in fixtures\.json/);
+      // path must include vec index and the value field: args.0.value.0.value
+      assert.match(err.message, /args\.0\.value\.0\.value/);
+      assert.match(err.message, /Invalid value for address/);
+      return true;
+    },
+  );
+});
+
+test("parseFixtures rejects invalid bytes value in a map entry with precise path", () => {
+  const json = JSON.stringify({
+    contracts: [
+      {
+        wasm_path: "contract.wasm",
+        invocations: [
+          {
+            function_name: "hello",
+            args: [
+              {
+                type: "map",
+                value: [
+                  {
+                    key: { type: "u32", value: 1 },
+                    value: { type: "bytes", value: "notvalidhex!" },
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    ],
+  });
+  assert.throws(
+    () => parseFixtures(json, "fixtures.json"),
+    (err) => {
+      assert.match(err.message, /Invalid WeighIn configuration in fixtures\.json/);
+      // path must include map index and both value segments: args.0.value.0.value.value
+      assert.match(err.message, /args\.0\.value\.0\.value\.value/);
+      assert.match(err.message, /Invalid value for bytes/);
+      return true;
+    },
+  );
+});
+
+test("parseFixtures rejects deeply nested invalid element with full contract/invocation/argument/index path", () => {
+  // vec[0] = valid symbol; vec[1] = vec whose element 0 has an invalid bytes value
+  const json = JSON.stringify({
+    contracts: [
+      {
+        wasm_path: "contract.wasm",
+        invocations: [
+          {
+            function_name: "hello",
+            args: [
+              {
+                type: "vec",
+                value: [
+                  { type: "symbol", value: "ok" },
+                  {
+                    type: "vec",
+                    value: [{ type: "bytes", value: "abc" }], // odd-length hex
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    ],
+  });
+  assert.throws(
+    () => parseFixtures(json, "fixtures.json"),
+    (err) => {
+      assert.match(err.message, /Invalid WeighIn configuration in fixtures\.json/);
+      // outer vec index 1, inner vec index 0: args.0.value.1.value.0.value
+      assert.match(err.message, /args\.0\.value\.1\.value\.0\.value/);
+      assert.match(err.message, /even length/);
+      return true;
+    },
+  );
+});
+
+test("parseFixtures rejects invalid address in deeply nested map key with full path", () => {
+  const json = JSON.stringify({
+    contracts: [
+      {
+        wasm_path: "contract.wasm",
+        invocations: [
+          {
+            function_name: "hello",
+            args: [
+              {
+                type: "vec",
+                value: [
+                  {
+                    type: "map",
+                    value: [
+                      {
+                        key: { type: "address", value: "BADKEY" },
+                        value: { type: "u32", value: 1 },
+                      },
+                    ],
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    ],
+  });
+  assert.throws(
+    () => parseFixtures(json, "fixtures.json"),
+    (err) => {
+      assert.match(err.message, /Invalid WeighIn configuration in fixtures\.json/);
+      // vec index 0, map entry 0 key: args.0.value.0.value.0.key.value
+      assert.match(err.message, /args\.0\.value\.0\.value\.0\.key\.value/);
+      assert.match(err.message, /Invalid value for address/);
+      return true;
+    },
+  );
+});
+
 test("Action rejects unknown fixture root field before build or deployment", () => {
   // The action unit hook mocks runMeasurement entirely in 'control' mode.
   // Instead, verify the rejection happens at the runMeasurement level:

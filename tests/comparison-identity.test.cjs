@@ -343,3 +343,65 @@ test('vec and map payloads with valid typed-argument contents parse successfully
   const mapResult = parseFixtures(mapFixture, 'weighin-fixtures.json');
   assert.ok(mapResult.contracts[0], 'map fixture should parse to a contract');
 });
+
+test('mixed nested valid values parse successfully: vec-of-map with address and bytes', () => {
+  const { StrKey } = require('@stellar/stellar-sdk');
+  const validAddress = StrKey.encodeEd25519PublicKey(Buffer.alloc(32, 3));
+
+  // vec containing a map whose key is an address and value is bytes
+  const fixture = JSON.stringify({
+    contracts: [{
+      wasm_path: 'contract.wasm',
+      invocations: [{
+        function_name: 'hello',
+        args: [{
+          type: 'vec',
+          value: [
+            { type: 'symbol', value: 'prefix' },
+            {
+              type: 'map',
+              value: [
+                {
+                  key: { type: 'address', value: validAddress },
+                  value: { type: 'bytes', value: 'deadbeef' },
+                },
+              ],
+            },
+          ],
+        }],
+      }],
+    }],
+  });
+  const result = parseFixtures(fixture, 'weighin-fixtures.json');
+  assert.ok(result.contracts[0], 'mixed nested fixture should parse to a contract');
+  assert.equal(result.contracts[0].invocations[0].args[0].type, 'vec');
+});
+
+test('deeply nested valid structure parses successfully: vec-of-vec-of-map', () => {
+  const { StrKey } = require('@stellar/stellar-sdk');
+  const validAddress = StrKey.encodeEd25519PublicKey(Buffer.alloc(32, 4));
+
+  const fixture = JSON.stringify({
+    contracts: [{
+      wasm_path: 'contract.wasm',
+      invocations: [{
+        function_name: 'hello',
+        args: [{
+          type: 'vec',
+          value: [{
+            type: 'vec',
+            value: [{
+              type: 'map',
+              value: [{
+                key: { type: 'symbol', value: 'k' },
+                value: { type: 'address', value: validAddress },
+              }],
+            }],
+          }],
+        }],
+      }],
+    }],
+  });
+  const result = parseFixtures(fixture, 'weighin-fixtures.json');
+  assert.ok(result.contracts[0], 'deeply nested fixture should parse to a contract');
+});

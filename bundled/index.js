@@ -35168,1315 +35168,6 @@ var coerce = {
 };
 var NEVER = INVALID;
 
-// src/record-schema.ts
-var METRIC_KEYS = [
-  "cpu_instructions",
-  "memory_bytes",
-  "ledger_read_entries",
-  "ledger_read_bytes",
-  "ledger_write_entries",
-  "ledger_write_bytes",
-  "historical_data_read_bytes",
-  "contract_data_hard_limit",
-  "tx_size_bytes",
-  "events_count",
-  "event_data_bytes"
-];
-var MeasurementRecordValidationError = class extends Error {
-  path;
-  version;
-  code;
-  diagnostics;
-  constructor(diagnostics) {
-    const first = diagnostics[0] ?? {
-      path: "$",
-      version: "unknown",
-      code: "INVALID_RECORD",
-      message: "Invalid measurement record"
-    };
-    super(`${first.message} [path: ${first.path}]`);
-    this.name = "MeasurementRecordValidationError";
-    this.path = first.path;
-    this.version = first.version;
-    this.code = first.code;
-    this.diagnostics = diagnostics;
-  }
-};
-var CONTRACT_ALLOWED_KEYS = /* @__PURE__ */ new Set([
-  "schema_version",
-  "fixture_id",
-  "logical_id",
-  "contract_id",
-  "git_commit",
-  "soroban_sdk_version",
-  "timestamp",
-  "benchmarks"
-]);
-var BENCHMARK_ALLOWED_KEYS = /* @__PURE__ */ new Set([
-  "function_name",
-  "case_id",
-  "metrics",
-  "wasm_sha256",
-  "provenance"
-]);
-var METRIC_VALUE_ALLOWED_KEYS = /* @__PURE__ */ new Set([
-  "availability",
-  "consumed",
-  "limit",
-  "reason",
-  "source",
-  "limit_source",
-  "limit_reason"
-]);
-var PROVENANCE_ALLOWED_KEYS = /* @__PURE__ */ new Set([
-  "source",
-  "source_version",
-  "protocol",
-  "helper_sha256",
-  "network_id",
-  "ledger",
-  "header_sha256",
-  "snapshot_sha256",
-  "config_sha256",
-  "compute_config_sha256",
-  "input_sha256",
-  "seed",
-  "auth_mode",
-  "host_features",
-  "resource_limits_sha256",
-  "source_account"
-]);
-var PROVENANCE_REQUIRED_STRINGS = [
-  "source",
-  "source_version",
-  "helper_sha256",
-  "network_id",
-  "compute_config_sha256",
-  "header_sha256",
-  "snapshot_sha256",
-  "config_sha256",
-  "input_sha256",
-  "auth_mode"
-];
-var METRIC_KEY_SET = new Set(METRIC_KEYS);
-var SHA256_HEX_PATTERN = /^[a-f0-9]{64}$/;
-var ACCOUNT_PUBLIC_KEY_PATTERN = /^G[A-Z2-7]{55}$/;
-function isPlainObject3(value) {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
-}
-function nonblank(value) {
-  return typeof value === "string" && value.trim().length > 0;
-}
-function detectRecordEnvelopeVersion(record) {
-  if (!isPlainObject3(record)) return "unknown";
-  const hasLogical = record.schema_version !== void 0 || record.fixture_id !== void 0 || record.logical_id !== void 0;
-  if (!hasLogical) return "legacy";
-  if (record.schema_version === 2 || record.schema_version === 3 || record.schema_version === 4) {
-    return record.schema_version;
-  }
-  return "unknown";
-}
-function validateProvenanceObject(provenance, version2, pPath, diagnostics) {
-  if (!isPlainObject3(provenance)) {
-    diagnostics.push({
-      path: pPath,
-      version: version2,
-      code: "INVALID_PROVENANCE_OBJECT",
-      message: `Schema ${version2} benchmarks require compute provenance`
-    });
-    return;
-  }
-  for (const key of Object.keys(provenance)) {
-    if (!PROVENANCE_ALLOWED_KEYS.has(key)) {
-      diagnostics.push({
-        path: `${pPath}.${key}`,
-        version: version2,
-        code: "UNKNOWN_PROVENANCE_FIELD",
-        message: `Invalid compute provenance: unexpected field ${key}`
-      });
-    }
-  }
-  for (const field of PROVENANCE_REQUIRED_STRINGS) {
-    if (!nonblank(provenance[field])) {
-      diagnostics.push({
-        path: `${pPath}.${field}`,
-        version: version2,
-        code: "INVALID_PROVENANCE_FIELD",
-        message: `Invalid compute provenance: ${field}`
-      });
-    }
-  }
-  if (!Number.isSafeInteger(provenance.ledger) || provenance.ledger < 0) {
-    diagnostics.push({
-      path: `${pPath}.ledger`,
-      version: version2,
-      code: "INVALID_PROVENANCE_LEDGER",
-      message: "Invalid compute provenance: ledger/protocol/host_features"
-    });
-  }
-  if (!Number.isSafeInteger(provenance.protocol) || provenance.protocol <= 0) {
-    diagnostics.push({
-      path: `${pPath}.protocol`,
-      version: version2,
-      code: "INVALID_PROVENANCE_PROTOCOL",
-      message: "Invalid compute provenance: ledger/protocol/host_features"
-    });
-  }
-  if (!Array.isArray(provenance.host_features) || !provenance.host_features.every(nonblank)) {
-    diagnostics.push({
-      path: `${pPath}.host_features`,
-      version: version2,
-      code: "INVALID_PROVENANCE_HOST_FEATURES",
-      message: "Invalid compute provenance: ledger/protocol/host_features"
-    });
-  }
-  if (!Array.isArray(provenance.seed) || provenance.seed.length !== 32 || !provenance.seed.every(
-    (value) => Number.isInteger(value) && value >= 0 && value <= 255
-  )) {
-    diagnostics.push({
-      path: `${pPath}.seed`,
-      version: version2,
-      code: "INVALID_PROVENANCE_SEED",
-      message: "Invalid compute provenance: seed"
-    });
-  }
-  if (provenance.resource_limits_sha256 !== void 0 && (typeof provenance.resource_limits_sha256 !== "string" || !SHA256_HEX_PATTERN.test(provenance.resource_limits_sha256))) {
-    diagnostics.push({
-      path: `${pPath}.resource_limits_sha256`,
-      version: version2,
-      code: "INVALID_RESOURCE_LIMITS_DIGEST",
-      message: "Schema 4 requires resource_limits_sha256"
-    });
-  }
-  if (provenance.source_account !== void 0 && (typeof provenance.source_account !== "string" || !ACCOUNT_PUBLIC_KEY_PATTERN.test(provenance.source_account))) {
-    diagnostics.push({
-      path: `${pPath}.source_account`,
-      version: version2,
-      code: "INVALID_SOURCE_ACCOUNT",
-      message: "Invalid compute provenance: source_account must be an Ed25519 account public key"
-    });
-  }
-}
-function inspectMeasurementRecord(value, index) {
-  const basePath = index === void 0 ? "$" : `$[${index}]`;
-  const diagnostics = [];
-  if (!isPlainObject3(value)) {
-    diagnostics.push({
-      path: basePath,
-      version: "unknown",
-      code: "INVALID_RECORD_OBJECT",
-      message: "Invalid measurement record: expected object"
-    });
-    return { valid: false, version: "unknown", diagnostics };
-  }
-  const version2 = detectRecordEnvelopeVersion(value);
-  for (const key of Object.keys(value)) {
-    if (!CONTRACT_ALLOWED_KEYS.has(key)) {
-      diagnostics.push({
-        path: `${basePath}.${key}`,
-        version: version2,
-        code: "UNKNOWN_CONTRACT_FIELD",
-        message: `Unexpected field in measurement record: ${key}`
-      });
-    }
-  }
-  const hasLogical = value.schema_version !== void 0 || value.fixture_id !== void 0 || value.logical_id !== void 0;
-  const benchmarksArray = Array.isArray(value.benchmarks) ? value.benchmarks : null;
-  let contractKey;
-  if (!hasLogical) {
-    if (benchmarksArray) {
-      benchmarksArray.forEach((fn, bIdx) => {
-        if (isPlainObject3(fn) && fn.case_id !== void 0) {
-          diagnostics.push({
-            path: `${basePath}.benchmarks[${bIdx}].case_id`,
-            version: "legacy",
-            code: "LEGACY_CASE_ID_FORBIDDEN",
-            message: "Case identity requires fixture and logical contract identities"
-          });
-        }
-      });
-    }
-    if (nonblank(value.contract_id)) {
-      contractKey = JSON.stringify(["legacy", value.contract_id]);
-    }
-  } else {
-    if (value.schema_version !== 2 && value.schema_version !== 3 && value.schema_version !== 4) {
-      diagnostics.push({
-        path: `${basePath}.schema_version`,
-        version: "unknown",
-        code: "UNSUPPORTED_SCHEMA_VERSION",
-        message: "Version 2/3/4 results require fixture_id, logical_id, and case_id for every benchmark"
-      });
-    }
-    if (!nonblank(value.fixture_id)) {
-      diagnostics.push({
-        path: `${basePath}.fixture_id`,
-        version: version2,
-        code: "MISSING_FIXTURE_ID",
-        message: "Version 2/3/4 results require fixture_id, logical_id, and case_id for every benchmark"
-      });
-    }
-    if (!nonblank(value.logical_id)) {
-      diagnostics.push({
-        path: `${basePath}.logical_id`,
-        version: version2,
-        code: "MISSING_LOGICAL_ID",
-        message: "Version 2/3/4 results require fixture_id, logical_id, and case_id for every benchmark"
-      });
-    }
-    if (benchmarksArray) {
-      benchmarksArray.forEach((fn, bIdx) => {
-        if (!isPlainObject3(fn) || !nonblank(fn.case_id)) {
-          diagnostics.push({
-            path: `${basePath}.benchmarks[${bIdx}].case_id`,
-            version: version2,
-            code: "MISSING_CASE_ID",
-            message: "Version 2/3/4 results require fixture_id, logical_id, and case_id for every benchmark"
-          });
-        }
-      });
-    }
-    if ((version2 === 2 || version2 === 3 || version2 === 4) && nonblank(value.fixture_id) && nonblank(value.logical_id)) {
-      contractKey = JSON.stringify([
-        "logical",
-        value.fixture_id,
-        value.logical_id
-      ]);
-    }
-  }
-  if (!nonblank(value.contract_id)) {
-    diagnostics.push({
-      path: `${basePath}.contract_id`,
-      version: version2,
-      code: "INVALID_CONTRACT_ID",
-      message: "Contract contract_id must not be blank"
-    });
-  }
-  if (!nonblank(value.git_commit)) {
-    diagnostics.push({
-      path: `${basePath}.git_commit`,
-      version: version2,
-      code: "INVALID_GIT_COMMIT",
-      message: "Contract git_commit must not be blank"
-    });
-  }
-  if (!nonblank(value.soroban_sdk_version)) {
-    diagnostics.push({
-      path: `${basePath}.soroban_sdk_version`,
-      version: version2,
-      code: "INVALID_SDK_VERSION",
-      message: "Contract soroban_sdk_version must not be blank"
-    });
-  }
-  if (!Number.isSafeInteger(value.timestamp) || value.timestamp < 0) {
-    diagnostics.push({
-      path: `${basePath}.timestamp`,
-      version: version2,
-      code: "INVALID_TIMESTAMP",
-      message: "Contract timestamp must be a non-negative safe integer"
-    });
-  }
-  if (!benchmarksArray) {
-    diagnostics.push({
-      path: `${basePath}.benchmarks`,
-      version: version2,
-      code: "INVALID_BENCHMARKS_ARRAY",
-      message: "Contract benchmarks must be an array"
-    });
-    return { valid: false, version: version2, diagnostics };
-  }
-  const seenBenchmarks = /* @__PURE__ */ new Set();
-  benchmarksArray.forEach((benchmark, bIdx) => {
-    const bPath = `${basePath}.benchmarks[${bIdx}]`;
-    if (!isPlainObject3(benchmark)) {
-      diagnostics.push({
-        path: bPath,
-        version: version2,
-        code: "INVALID_BENCHMARK_OBJECT",
-        message: "Invalid benchmark result: expected object"
-      });
-      return;
-    }
-    for (const key of Object.keys(benchmark)) {
-      if (!BENCHMARK_ALLOWED_KEYS.has(key)) {
-        diagnostics.push({
-          path: `${bPath}.${key}`,
-          version: version2,
-          code: "UNKNOWN_BENCHMARK_FIELD",
-          message: `Unexpected field in benchmark record: ${key}`
-        });
-      }
-    }
-    if (!nonblank(benchmark.function_name)) {
-      diagnostics.push({
-        path: `${bPath}.function_name`,
-        version: version2,
-        code: "INVALID_FUNCTION_NAME",
-        message: "Benchmark function_name must not be blank"
-      });
-    } else {
-      const benchKey = JSON.stringify([
-        benchmark.function_name,
-        benchmark.case_id ?? null
-      ]);
-      if (seenBenchmarks.has(benchKey)) {
-        diagnostics.push({
-          path: bPath,
-          version: version2,
-          code: "DUPLICATE_BENCHMARK_IDENTITY",
-          message: `Duplicate benchmark identity: ${benchKey}`
-        });
-      } else {
-        seenBenchmarks.add(benchKey);
-      }
-    }
-    if (!nonblank(benchmark.wasm_sha256)) {
-      diagnostics.push({
-        path: `${bPath}.wasm_sha256`,
-        version: version2,
-        code: "INVALID_WASM_SHA256",
-        message: "Benchmark wasm_sha256 must not be blank"
-      });
-    }
-    const metricsObj = benchmark.metrics;
-    if (!isPlainObject3(metricsObj)) {
-      diagnostics.push({
-        path: `${bPath}.metrics`,
-        version: version2,
-        code: "INVALID_METRICS_OBJECT",
-        message: "Missing metric cpu_instructions; use an explicit unavailable record"
-      });
-    } else {
-      for (const extraKey of Object.keys(metricsObj)) {
-        if (!METRIC_KEY_SET.has(extraKey)) {
-          diagnostics.push({
-            path: `${bPath}.metrics.${extraKey}`,
-            version: version2,
-            code: "UNKNOWN_METRIC_KEY",
-            message: `Unexpected metric key: ${extraKey}`
-          });
-        }
-      }
-      for (const key of METRIC_KEYS) {
-        const mPath = `${bPath}.metrics.${key}`;
-        const metricVal = metricsObj[key];
-        if (!isPlainObject3(metricVal)) {
-          diagnostics.push({
-            path: mPath,
-            version: version2,
-            code: "MISSING_METRIC",
-            message: `Missing metric ${key}; use an explicit unavailable record`
-          });
-          continue;
-        }
-        for (const fieldKey of Object.keys(metricVal)) {
-          if (!METRIC_VALUE_ALLOWED_KEYS.has(fieldKey)) {
-            diagnostics.push({
-              path: `${mPath}.${fieldKey}`,
-              version: version2,
-              code: "UNKNOWN_METRIC_FIELD",
-              message: `Invalid metric field ${key}.${fieldKey}`
-            });
-          }
-        }
-        if (metricVal.availability !== void 0 && metricVal.availability !== "measured" && metricVal.availability !== "unavailable") {
-          diagnostics.push({
-            path: `${mPath}.availability`,
-            version: version2,
-            code: "INVALID_METRIC_AVAILABILITY",
-            message: `Invalid metric availability ${key}`
-          });
-        }
-        if (metricVal.availability === "unavailable") {
-          if (metricVal.consumed !== null || !nonblank(metricVal.reason)) {
-            diagnostics.push({
-              path: metricVal.consumed !== null ? `${mPath}.consumed` : `${mPath}.reason`,
-              version: version2,
-              code: "INVALID_UNAVAILABLE_METRIC",
-              message: `Invalid unavailable metric ${key}`
-            });
-          }
-        } else if (metricVal.consumed === null || !Number.isSafeInteger(metricVal.consumed) || metricVal.consumed < 0) {
-          diagnostics.push({
-            path: `${mPath}.consumed`,
-            version: version2,
-            code: "INVALID_MEASURED_METRIC",
-            message: `Invalid measured metric ${key}`
-          });
-        }
-        if (metricVal.limit !== null && (!Number.isSafeInteger(metricVal.limit) || metricVal.limit < 0)) {
-          diagnostics.push({
-            path: `${mPath}.limit`,
-            version: version2,
-            code: "INVALID_METRIC_LIMIT",
-            message: `Invalid metric limit ${key}`
-          });
-        }
-      }
-    }
-    if (version2 === 3 || version2 === 4) {
-      if (!benchmark.provenance) {
-        diagnostics.push({
-          path: `${bPath}.provenance`,
-          version: version2,
-          code: "MISSING_PROVENANCE",
-          message: `Schema ${version2} benchmarks require compute provenance`
-        });
-      } else {
-        validateProvenanceObject(
-          benchmark.provenance,
-          version2,
-          `${bPath}.provenance`,
-          diagnostics
-        );
-      }
-      if (isPlainObject3(metricsObj)) {
-        for (const key of METRIC_KEYS) {
-          const mPath = `${bPath}.metrics.${key}`;
-          const metricVal = metricsObj[key];
-          if (!isPlainObject3(metricVal)) continue;
-          if (metricVal.availability === void 0 || metricVal.availability === "measured" && !nonblank(metricVal.source)) {
-            diagnostics.push({
-              path: metricVal.availability === void 0 ? `${mPath}.availability` : `${mPath}.source`,
-              version: version2,
-              code: "MISSING_METRIC_SOURCE_OR_AVAILABILITY",
-              message: `Schema ${version2} requires explicit availability and measured source for ${key}`
-            });
-          }
-          if (version2 === 4 && metricVal.availability === "measured") {
-            if (metricVal.limit === null ? !nonblank(metricVal.limit_reason) : !nonblank(metricVal.limit_source)) {
-              diagnostics.push({
-                path: metricVal.limit === null ? `${mPath}.limit_reason` : `${mPath}.limit_source`,
-                version: version2,
-                code: "MISSING_METRIC_LIMIT_PROVENANCE",
-                message: `Schema 4 requires explicit limit provenance for ${key}`
-              });
-            }
-          }
-        }
-      }
-      if (version2 === 4 && isPlainObject3(benchmark.provenance) && !SHA256_HEX_PATTERN.test(
-        benchmark.provenance.resource_limits_sha256 ?? ""
-      )) {
-        const alreadyReported = diagnostics.some(
-          (d) => d.path === `${bPath}.provenance.resource_limits_sha256`
-        );
-        if (!alreadyReported) {
-          diagnostics.push({
-            path: `${bPath}.provenance.resource_limits_sha256`,
-            version: version2,
-            code: "MISSING_RESOURCE_LIMITS_DIGEST",
-            message: "Schema 4 requires resource_limits_sha256"
-          });
-        }
-      }
-    } else if (benchmark.provenance !== void 0) {
-      validateProvenanceObject(
-        benchmark.provenance,
-        version2,
-        `${bPath}.provenance`,
-        diagnostics
-      );
-    }
-  });
-  if (diagnostics.length > 0) {
-    return { valid: false, version: version2, diagnostics };
-  }
-  return {
-    valid: true,
-    version: version2,
-    contractKey,
-    record: value,
-    diagnostics: []
-  };
-}
-function inspectMeasurementRecords(value) {
-  if (!Array.isArray(value)) {
-    return {
-      valid: false,
-      version: "unknown",
-      diagnostics: [
-        {
-          path: "$",
-          version: "unknown",
-          code: "INVALID_RECORDS_ARRAY",
-          message: "Invalid measurement records: expected array"
-        }
-      ]
-    };
-  }
-  const diagnostics = [];
-  const seenContractKeys = /* @__PURE__ */ new Set();
-  const records = [];
-  let detectedVersion = null;
-  value.forEach((item, index) => {
-    const single = inspectMeasurementRecord(item, index);
-    if (detectedVersion === null) {
-      detectedVersion = single.version;
-    } else if (single.version !== "unknown" && detectedVersion !== "unknown" && single.version !== detectedVersion) {
-      diagnostics.push({
-        path: `$[${index}].schema_version`,
-        version: single.version,
-        code: "MIXED_SCHEMA_VERSIONS",
-        message: "Cannot compare measurements with different schema versions"
-      });
-    }
-    if (single.contractKey !== void 0) {
-      if (seenContractKeys.has(single.contractKey)) {
-        diagnostics.push({
-          path: `$[${index}]`,
-          version: single.version,
-          code: "DUPLICATE_CONTRACT_IDENTITY",
-          message: `Duplicate logical contract identity: ${single.contractKey}`
-        });
-      } else {
-        seenContractKeys.add(single.contractKey);
-      }
-    }
-    if (single.diagnostics.length > 0) {
-      diagnostics.push(...single.diagnostics);
-    } else if (single.record) {
-      records.push(single.record);
-    }
-  });
-  if (diagnostics.length > 0) {
-    return {
-      valid: false,
-      version: detectedVersion,
-      diagnostics
-    };
-  }
-  return {
-    valid: true,
-    version: detectedVersion,
-    records,
-    diagnostics: []
-  };
-}
-function validateMeasurementRecords(value) {
-  const result = inspectMeasurementRecords(value);
-  if (!result.valid || !result.records) {
-    throw new MeasurementRecordValidationError(result.diagnostics);
-  }
-  return result.records;
-}
-function resolveContractIdentityKey(contract, index) {
-  const result = inspectMeasurementRecord(contract, index);
-  if (!result.valid || !result.contractKey) {
-    throw new MeasurementRecordValidationError(result.diagnostics);
-  }
-  return result.contractKey;
-}
-function validateBenchmarkComparisonCompatibility(baseFn, headFn) {
-  if (!baseFn.provenance && !headFn.provenance) {
-    return;
-  }
-  const fields = [
-    "source",
-    "source_version",
-    "protocol",
-    "helper_sha256",
-    "network_id",
-    "compute_config_sha256",
-    "seed",
-    "auth_mode",
-    "host_features",
-    // The invoking account is part of the measured environment: results
-    // measured under different source accounts are not comparable.
-    "source_account"
-  ];
-  for (const field of fields) {
-    if (!baseFn.provenance || !headFn.provenance || JSON.stringify(baseFn.provenance[field]) !== JSON.stringify(headFn.provenance[field])) {
-      throw new Error(`Incompatible measurement environment: ${field}`);
-    }
-  }
-  if (JSON.stringify(baseFn.provenance?.resource_limits_sha256) !== JSON.stringify(headFn.provenance?.resource_limits_sha256)) {
-    throw new Error(
-      "Incompatible measurement environment: resource_limits_sha256"
-    );
-  }
-  if (headFn.provenance?.resource_limits_sha256) {
-    for (const metric of METRIC_KEYS) {
-      for (const field of [
-        "availability",
-        "source",
-        "limit",
-        "limit_source",
-        "limit_reason"
-      ]) {
-        if (baseFn.metrics[metric][field] !== headFn.metrics[metric][field]) {
-          throw new Error(`Incompatible metric semantics: ${metric}.${field}`);
-        }
-      }
-    }
-  }
-}
-
-// src/diff.ts
-var AGGREGATE_METRIC_DESCRIPTIONS = {
-  cpu_instructions: "Cumulative CPU Instructions",
-  memory_bytes: "Cumulative Invocation Memory Bytes (sum of invocation costs, not peak concurrent memory)",
-  ledger_read_entries: "Cumulative Footprint Read Entries (RO + RW)",
-  ledger_read_bytes: "Cumulative Disk Read Bytes",
-  ledger_write_entries: "Cumulative Write Footprint Entries",
-  ledger_write_bytes: "Cumulative Ledger Write Bytes",
-  historical_data_read_bytes: "Cumulative Historical Read Bytes",
-  contract_data_hard_limit: "Cumulative Contract Data (instance)",
-  tx_size_bytes: "Cumulative Tx Size Bytes",
-  events_count: "Cumulative Successful Contract/System Events",
-  event_data_bytes: "Cumulative Events + Return XDR Bytes"
-};
-function diffMetrics(base, head) {
-  return METRIC_KEYS.map((key) => {
-    const b = base[key];
-    const h = head[key];
-    if (b.consumed === null || h.consumed === null) {
-      return {
-        key,
-        base: b,
-        head: h,
-        availability: "unavailable",
-        reason: [
-          b.reason && `BASE: ${b.reason}`,
-          h.reason && `HEAD: ${h.reason}`
-        ].filter(Boolean).join("; "),
-        delta: null,
-        pct: null,
-        regression: false
-      };
-    }
-    const delta = h.consumed - b.consumed;
-    const pct = b.consumed === 0 ? null : delta / b.consumed * 100;
-    return {
-      key,
-      base: b,
-      head: h,
-      availability: "comparable",
-      delta,
-      pct,
-      regression: delta > 0
-    };
-  });
-}
-function diffFunctions(baseFns, headFns) {
-  const baseMap = benchmarkMap(baseFns);
-  const headMap = benchmarkMap(headFns);
-  const baseNames = new Set(baseFns.map((fn) => fn.function_name));
-  const headNames = new Set(headFns.map((fn) => fn.function_name));
-  const newFunctions = [...headNames].filter((name) => !baseNames.has(name));
-  const removedFunctions = [...baseNames].filter(
-    (name) => !headNames.has(name)
-  );
-  const newBenchmarks = [];
-  const removedBenchmarks = [];
-  const functions = [];
-  for (const [key, fn] of headMap) {
-    if (!baseMap.has(key)) newBenchmarks.push(benchmarkIdentity(fn));
-  }
-  for (const [key, fn] of baseMap) {
-    if (!headMap.has(key)) removedBenchmarks.push(benchmarkIdentity(fn));
-  }
-  for (const [key, headFn] of headMap) {
-    const baseFn = baseMap.get(key);
-    if (!baseFn) continue;
-    validateBenchmarkComparisonCompatibility(baseFn, headFn);
-    const metrics = diffMetrics(baseFn.metrics, headFn.metrics);
-    const hasRegression = metrics.some((m) => m.regression);
-    functions.push({
-      ...benchmarkIdentity(headFn),
-      metrics,
-      hasRegression,
-      base_provenance: baseFn.provenance,
-      head_provenance: headFn.provenance
-    });
-  }
-  return {
-    functions,
-    newFunctions,
-    removedFunctions,
-    newBenchmarks,
-    removedBenchmarks
-  };
-}
-function benchmarkIdentity(fn) {
-  return {
-    function_name: fn.function_name,
-    ...fn.case_id === void 0 ? {} : { case_id: fn.case_id }
-  };
-}
-function benchmarkMap(functions) {
-  const result = /* @__PURE__ */ new Map();
-  for (const fn of functions) {
-    const key = JSON.stringify([fn.function_name, fn.case_id ?? null]);
-    result.set(key, fn);
-  }
-  return result;
-}
-function contractMap(contracts) {
-  const validated = validateMeasurementRecords(contracts);
-  const result = /* @__PURE__ */ new Map();
-  validated.forEach((contract, index) => {
-    const key = resolveContractIdentityKey(contract, index);
-    result.set(key, contract);
-  });
-  return result;
-}
-function contractLabel(contract) {
-  return contract.logical_id === void 0 ? contract.contract_id : `${contract.fixture_id} / ${contract.logical_id}`;
-}
-function matchesSelector(selector, candidate) {
-  if (selector.function_name !== candidate.function_name) return false;
-  if (selector.fixture_id !== void 0 && selector.fixture_id !== candidate.fixture_id)
-    return false;
-  if (selector.logical_id !== void 0 && selector.logical_id !== candidate.logical_id)
-    return false;
-  if (selector.case_id !== void 0 && selector.case_id !== candidate.case_id)
-    return false;
-  return true;
-}
-function formatSelector(sel) {
-  const parts = [];
-  if (sel.fixture_id) parts.push(`fixture:${sel.fixture_id}`);
-  if (sel.logical_id) parts.push(`contract:${sel.logical_id}`);
-  parts.push(`fn:${sel.function_name}`);
-  if (sel.case_id) parts.push(`case:${sel.case_id}`);
-  return parts.join(" / ");
-}
-function computeAggregateDiffs(diff, config2) {
-  if (!config2) return [];
-  const aggregateNames = /* @__PURE__ */ new Set();
-  if (config2.aggregates) {
-    for (const name of Object.keys(config2.aggregates)) aggregateNames.add(name);
-  }
-  if (config2.limits?.aggregates) {
-    for (const name of Object.keys(config2.limits.aggregates))
-      aggregateNames.add(name);
-  }
-  if (config2.thresholds?.aggregates) {
-    for (const name of Object.keys(config2.thresholds.aggregates))
-      aggregateNames.add(name);
-  }
-  if (aggregateNames.size === 0) return [];
-  const aggregateDiffs = [];
-  for (const name of aggregateNames) {
-    const aggDef = config2.aggregates?.[name];
-    if (!aggDef || !aggDef.members || !Array.isArray(aggDef.members) || aggDef.members.length === 0) {
-      throw new Error(
-        `Cannot evaluate aggregate budget "${name}": missing required member selectors in [aggregates.${name}]`
-      );
-    }
-    const seenSelectors = /* @__PURE__ */ new Set();
-    for (const member of aggDef.members) {
-      if (!member.function_name) {
-        throw new Error(
-          `Cannot evaluate aggregate budget "${name}": member selector missing required function_name`
-        );
-      }
-      const selKey = JSON.stringify([
-        member.fixture_id ?? "",
-        member.logical_id ?? "",
-        member.function_name,
-        member.case_id ?? ""
-      ]);
-      if (seenSelectors.has(selKey)) {
-        throw new Error(
-          `Cannot evaluate aggregate budget "${name}": duplicate member selector ${formatSelector(member)}`
-        );
-      }
-      seenSelectors.add(selKey);
-    }
-    const resolvedMembers = [];
-    const matchedCanonicalKeys = /* @__PURE__ */ new Set();
-    for (const member of aggDef.members) {
-      const matches = [];
-      for (const contract2 of diff.contracts) {
-        for (const fn2 of contract2.functions) {
-          if (matchesSelector(member, {
-            fixture_id: contract2.fixture_id,
-            logical_id: contract2.logical_id,
-            function_name: fn2.function_name,
-            case_id: fn2.case_id
-          })) {
-            matches.push({ contract: contract2, fn: fn2 });
-          }
-        }
-      }
-      if (matches.length === 0) {
-        throw new Error(
-          `Cannot evaluate aggregate budget "${name}": member ${formatSelector(member)} has no matched BASE/HEAD benchmark`
-        );
-      }
-      if (matches.length > 1) {
-        throw new Error(
-          `Cannot evaluate aggregate budget "${name}": member ${formatSelector(member)} is ambiguous (matched ${matches.length} benchmarks)`
-        );
-      }
-      const { contract, fn } = matches[0];
-      const canonicalKey = JSON.stringify([
-        contract.fixture_id ?? "",
-        contract.logical_id ?? "",
-        fn.function_name,
-        fn.case_id ?? ""
-      ]);
-      if (matchedCanonicalKeys.has(canonicalKey)) {
-        throw new Error(
-          `Cannot evaluate aggregate budget "${name}": duplicate member detected for benchmark "${contract.logical_id ?? contract.contract_id} / ${fn.function_name}${fn.case_id ? ` / ${fn.case_id}` : ""}"`
-        );
-      }
-      matchedCanonicalKeys.add(canonicalKey);
-      resolvedMembers.push({ selector: member, contract, fn, canonicalKey });
-    }
-    let commonSource;
-    let commonProtocol;
-    let commonNetwork;
-    let commonComputeConfig;
-    let commonLimitsConfig;
-    for (const { fn } of resolvedMembers) {
-      const prov = fn.head_provenance;
-      if (!prov) continue;
-      if (commonSource === void 0) {
-        commonSource = prov.source;
-        commonProtocol = prov.protocol;
-        commonNetwork = prov.network_id;
-        commonComputeConfig = prov.compute_config_sha256;
-        commonLimitsConfig = prov.resource_limits_sha256;
-      } else {
-        if (prov.source !== commonSource) {
-          throw new Error(
-            `Cannot evaluate aggregate budget "${name}": incompatible measurement environments across members (mismatched meter source: ${commonSource} vs ${prov.source})`
-          );
-        }
-        if (prov.protocol !== commonProtocol) {
-          throw new Error(
-            `Cannot evaluate aggregate budget "${name}": incompatible measurement environments across members (mismatched protocol: ${commonProtocol} vs ${prov.protocol})`
-          );
-        }
-        if (prov.network_id !== commonNetwork) {
-          throw new Error(
-            `Cannot evaluate aggregate budget "${name}": incompatible measurement environments across members (mismatched network: ${commonNetwork} vs ${prov.network_id})`
-          );
-        }
-        if (prov.compute_config_sha256 !== commonComputeConfig) {
-          throw new Error(
-            `Cannot evaluate aggregate budget "${name}": incompatible measurement environments across members (mismatched compute configuration / calibration)`
-          );
-        }
-        if (prov.resource_limits_sha256 !== commonLimitsConfig) {
-          throw new Error(
-            `Cannot evaluate aggregate budget "${name}": incompatible measurement environments across members (mismatched resource limits configuration)`
-          );
-        }
-      }
-    }
-    const breakdown = {};
-    const metrics = [];
-    for (const key of METRIC_KEYS) {
-      const memberRows = [];
-      let allComparable = true;
-      let unavailableReason;
-      let baseSum = 0;
-      let headSum = 0;
-      for (const { contract, fn } of resolvedMembers) {
-        const mDiff = fn.metrics.find((m) => m.key === key);
-        const baseVal = mDiff?.base.consumed ?? null;
-        const headVal = mDiff?.head.consumed ?? null;
-        const delta = mDiff?.delta ?? (baseVal !== null && headVal !== null ? headVal - baseVal : null);
-        memberRows.push({
-          fixture_id: contract.fixture_id,
-          logical_id: contract.logical_id,
-          contract_id: contract.head_contract_id || contract.contract_id,
-          function_name: fn.function_name,
-          case_id: fn.case_id,
-          base_consumed: baseVal,
-          head_consumed: headVal,
-          delta
-        });
-        if (!mDiff || mDiff.availability === "unavailable" || baseVal === null || headVal === null) {
-          allComparable = false;
-          if (!unavailableReason) {
-            unavailableReason = `Member ${contract.logical_id ?? contract.contract_id} / ${fn.function_name}${fn.case_id ? ` / ${fn.case_id}` : ""} ${key} is unavailable: ${mDiff?.reason ?? "measured value unavailable"}`;
-          }
-        } else {
-          baseSum += baseVal;
-          headSum += headVal;
-        }
-      }
-      breakdown[key] = memberRows;
-      if (!allComparable) {
-        metrics.push({
-          key,
-          base_consumed: null,
-          head_consumed: null,
-          delta: null,
-          pct: null,
-          regression: false,
-          availability: "unavailable",
-          reason: unavailableReason,
-          description: AGGREGATE_METRIC_DESCRIPTIONS[key]
-        });
-      } else {
-        const delta = headSum - baseSum;
-        const regression = delta > 0;
-        const pct = baseSum === 0 ? delta > 0 ? null : 0 : delta / baseSum * 100;
-        metrics.push({
-          key,
-          base_consumed: baseSum,
-          head_consumed: headSum,
-          delta,
-          pct,
-          regression,
-          availability: "comparable",
-          description: AGGREGATE_METRIC_DESCRIPTIONS[key]
-        });
-      }
-    }
-    const hasRegression = metrics.some((m) => m.regression);
-    const provenance = commonSource ? {
-      source: commonSource,
-      protocol_version: commonProtocol ?? 0,
-      network_passphrase: commonNetwork ?? "",
-      compute_config_sha256: commonComputeConfig
-    } : void 0;
-    aggregateDiffs.push({
-      name,
-      description: aggDef.description,
-      members: aggDef.members,
-      member_count: resolvedMembers.length,
-      breakdown,
-      metrics,
-      provenance,
-      hasRegression
-    });
-  }
-  diff.aggregates = aggregateDiffs;
-  if (aggregateDiffs.some((a) => a.hasRegression)) {
-    diff.hasRegression = true;
-  }
-  return aggregateDiffs;
-}
-function diffBenchmarks(base, head, config2) {
-  const baseMap = contractMap(base);
-  const headMap = contractMap(head);
-  if (base.length > 0 && head.length > 0 && base[0].schema_version !== void 0 && head[0].schema_version !== void 0 && base[0].schema_version !== head[0].schema_version) {
-    throw new Error(
-      "Cannot compare measurements with different schema versions"
-    );
-  }
-  const newContracts = [];
-  const removedContracts = [];
-  const contracts = [];
-  for (const [key, contract] of headMap) {
-    if (!baseMap.has(key)) newContracts.push(contractLabel(contract));
-  }
-  for (const [key, contract] of baseMap) {
-    if (!headMap.has(key)) removedContracts.push(contractLabel(contract));
-  }
-  for (const [key, headContract] of headMap) {
-    const baseContract = baseMap.get(key);
-    if (!baseContract) continue;
-    if (baseContract.schema_version !== headContract.schema_version)
-      throw new Error(
-        "Cannot compare measurements with different schema versions"
-      );
-    const benchmarkDiff = diffFunctions(
-      baseContract.benchmarks,
-      headContract.benchmarks
-    );
-    const hasRegression = benchmarkDiff.functions.some((f) => f.hasRegression);
-    contracts.push({
-      fixture_id: headContract.fixture_id,
-      logical_id: headContract.logical_id,
-      contract_id: headContract.contract_id,
-      base_contract_id: baseContract.contract_id,
-      head_contract_id: headContract.contract_id,
-      base_commit: baseContract.git_commit,
-      head_commit: headContract.git_commit,
-      ...benchmarkDiff,
-      hasRegression
-    });
-  }
-  const diff = {
-    contracts,
-    hasRegression: contracts.some((c) => c.hasRegression),
-    newContracts,
-    removedContracts
-  };
-  if (config2) {
-    computeAggregateDiffs(diff, config2);
-  }
-  return diff;
-}
-
-// src/config.ts
-var RuleValueSchema = external_exports.union([
-  external_exports.number(),
-  external_exports.string().refine(
-    (val) => {
-      return val === "ignore" || val === "strict_zero_tolerance" || /^allow_[\d.]+_percent_increase$/.test(val);
-    },
-    {
-      message: "Invalid rule string. Must be 'ignore', 'strict_zero_tolerance', or 'allow_X_percent_increase'"
-    }
-  )
-]);
-var GlobalThresholdsSchema = external_exports.object({
-  fail_on_any_regression: external_exports.boolean().optional(),
-  max_allowed_cpu_increase_pct: external_exports.number().optional(),
-  max_allowed_memory_increase_pct: external_exports.number().optional()
-}).strict();
-var GlobalLimitsSchema = external_exports.record(
-  external_exports.enum(METRIC_KEYS),
-  external_exports.number().nonnegative()
-);
-var FunctionLimitsSchema = external_exports.record(
-  external_exports.enum(METRIC_KEYS),
-  external_exports.number().nonnegative()
-);
-var FunctionThresholdsSchema = external_exports.record(
-  external_exports.enum(METRIC_KEYS),
-  RuleValueSchema
-);
-var BenchmarkSelectorSchema = external_exports.object({
-  fixture_id: external_exports.string().min(1).optional(),
-  logical_id: external_exports.string().min(1).optional(),
-  function_name: external_exports.string().min(1),
-  case_id: external_exports.string().min(1).optional()
-}).strict();
-var AggregateBudgetConfigSchema = external_exports.object({
-  description: external_exports.string().optional(),
-  members: external_exports.array(BenchmarkSelectorSchema).min(1),
-  limits: external_exports.record(external_exports.enum(METRIC_KEYS), external_exports.number().nonnegative()).optional(),
-  thresholds: external_exports.record(external_exports.enum(METRIC_KEYS), RuleValueSchema).optional()
-}).strict();
-var WeighinConfigSchema = external_exports.object({
-  thresholds: external_exports.object({
-    global: GlobalThresholdsSchema.optional(),
-    functions: external_exports.record(external_exports.string(), FunctionThresholdsSchema).optional(),
-    aggregates: external_exports.record(external_exports.string(), FunctionThresholdsSchema).optional()
-  }).strict().optional(),
-  limits: external_exports.object({
-    global: GlobalLimitsSchema.optional(),
-    functions: external_exports.record(external_exports.string(), FunctionLimitsSchema).optional(),
-    aggregates: external_exports.record(external_exports.string(), FunctionLimitsSchema).optional()
-  }).strict().optional(),
-  aggregates: external_exports.record(external_exports.string(), AggregateBudgetConfigSchema).optional()
-}).strict();
-var U64_MAX = 18446744073709551615n;
-var I64_MIN = -9223372036854775808n;
-var I64_MAX = 9223372036854775807n;
-var U128_MAX = 340282366920938463463374607431768211455n;
-var I128_MIN = -170141183460469231731687303715884105728n;
-var I128_MAX = 170141183460469231731687303715884105727n;
-function validateLargeInt(type, val) {
-  if (typeof val !== "string") {
-    return `Invalid value for ${type}: must be a string to preserve precision`;
-  }
-  if (!/^-?\d+$/.test(val)) {
-    return `Invalid value for ${type}: must be a valid integer string`;
-  }
-  try {
-    const bi = BigInt(val);
-    switch (type) {
-      case "u64":
-        if (bi < 0n || bi > U64_MAX)
-          return `Invalid value for u64: out of bounds`;
-        break;
-      case "i64":
-        if (bi < I64_MIN || bi > I64_MAX)
-          return `Invalid value for i64: out of bounds`;
-        break;
-      case "u128":
-        if (bi < 0n || bi > U128_MAX)
-          return `Invalid value for u128: out of bounds`;
-        break;
-      case "i128":
-        if (bi < I128_MIN || bi > I128_MAX)
-          return `Invalid value for i128: out of bounds`;
-        break;
-    }
-  } catch {
-    return `Invalid value for ${type}: malformed integer string`;
-  }
-  return null;
-}
-var InvocationArgSchema = external_exports.lazy(
-  () => external_exports.object({
-    type: external_exports.preprocess(
-      (val) => typeof val === "string" ? val.toLowerCase() : val,
-      external_exports.enum([
-        "symbol",
-        "string",
-        "u32",
-        "i32",
-        "bool",
-        "u64",
-        "i64",
-        "u128",
-        "i128",
-        "address",
-        "bytes",
-        "vec",
-        "map"
-      ])
-    ),
-    value: external_exports.any()
-  }).strict().superRefine((data, ctx) => {
-    if (["u64", "i64", "u128", "i128"].includes(data.type)) {
-      const err = validateLargeInt(data.type, data.value);
-      if (err) {
-        ctx.addIssue({
-          code: external_exports.ZodIssueCode.custom,
-          message: err,
-          path: ["value"]
-        });
-      }
-    } else if (data.type === "vec") {
-      if (!Array.isArray(data.value)) {
-        ctx.addIssue({
-          code: external_exports.ZodIssueCode.custom,
-          message: "must be array",
-          path: ["value"]
-        });
-      } else {
-        data.value.forEach((val, idx) => {
-          const res = InvocationArgSchema.safeParse(val);
-          if (!res.success) {
-            res.error.issues.forEach((issue) => {
-              ctx.addIssue({ ...issue, path: ["value", idx, ...issue.path] });
-            });
-          } else {
-            data.value[idx] = res.data;
-          }
-        });
-      }
-    } else if (data.type === "map") {
-      if (!Array.isArray(data.value)) {
-        ctx.addIssue({
-          code: external_exports.ZodIssueCode.custom,
-          message: "must be array",
-          path: ["value"]
-        });
-      } else {
-        data.value.forEach((entry, idx) => {
-          if (!entry || !entry.key || !entry.value) {
-            ctx.addIssue({
-              code: external_exports.ZodIssueCode.custom,
-              message: "map entries must have key and value",
-              path: ["value", idx]
-            });
-          } else {
-            const resK = InvocationArgSchema.safeParse(entry.key);
-            if (!resK.success) {
-              resK.error.issues.forEach(
-                (issue) => ctx.addIssue({
-                  ...issue,
-                  path: ["value", idx, "key", ...issue.path]
-                })
-              );
-            } else {
-              data.value[idx].key = resK.data;
-            }
-            const resV = InvocationArgSchema.safeParse(entry.value);
-            if (!resV.success) {
-              resV.error.issues.forEach(
-                (issue) => ctx.addIssue({
-                  ...issue,
-                  path: ["value", idx, "value", ...issue.path]
-                })
-              );
-            } else {
-              data.value[idx].value = resV.data;
-            }
-          }
-        });
-      }
-    }
-  })
-);
-var idSchema = external_exports.string().refine((value) => value.trim().length > 0, "ID must not be blank");
-var InvocationSpecSchema = external_exports.object({
-  id: idSchema.optional(),
-  function_name: external_exports.string().min(1),
-  args: external_exports.array(InvocationArgSchema)
-}).strict();
-var ContractSpecSchema = external_exports.object({
-  id: idSchema.optional(),
-  wasm_path: external_exports.string().min(1),
-  invocations: external_exports.array(InvocationSpecSchema).min(1)
-}).strict();
-var FixturesSpecSchema = external_exports.object({
-  id: idSchema.optional(),
-  contracts: external_exports.array(ContractSpecSchema).min(1)
-}).strict();
-function formatZodError(error2, fileName) {
-  const lines = [`Invalid WeighIn configuration in ${fileName}:`];
-  for (const issue of error2.issues) {
-    const path7 = issue.path.join(".");
-    lines.push(`- ${path7 || "root"}: ${issue.message}`);
-  }
-  return lines.join("\n");
-}
-
-// src/identity.ts
-function relativePath(value) {
-  const portable = value.replace(/\\/g, "/");
-  if (path.posix.isAbsolute(portable) || /^[A-Za-z]:/.test(portable)) {
-    throw new Error(
-      `Comparison identity requires a relative path or an explicit id: ${value}`
-    );
-  }
-  return path.posix.normalize(portable);
-}
-function canonical(value) {
-  if (Array.isArray(value)) return value.map(canonical);
-  if (value !== null && typeof value === "object") {
-    return Object.fromEntries(
-      Object.keys(value).sort().map((key) => [key, canonical(value[key])])
-    );
-  }
-  return value;
-}
-function parseFixtures(raw, fixturePath) {
-  let fixtures;
-  try {
-    fixtures = FixturesSpecSchema.parse(JSON.parse(raw));
-  } catch (err) {
-    if (err instanceof ZodError) {
-      throw new Error(formatZodError(err, fixturePath));
-    }
-    throw err;
-  }
-  const fixture_id = fixtures.id === void 0 ? `path:${relativePath(fixturePath)}` : `id:${fixtures.id}`;
-  const contractIds = /* @__PURE__ */ new Set();
-  const contracts = fixtures.contracts.map((contract) => {
-    const logical_id = contract.id === void 0 ? `wasm:${relativePath(contract.wasm_path)}` : `id:${contract.id}`;
-    if (contractIds.has(logical_id)) {
-      throw new Error(
-        `Duplicate logical contract identity in ${fixture_id}: ${logical_id}`
-      );
-    }
-    contractIds.add(logical_id);
-    const caseIds = /* @__PURE__ */ new Set();
-    const invocations = contract.invocations.map((invocation) => {
-      const args = invocation.args.map((arg) => ({
-        type: arg.type.toLowerCase(),
-        value: canonical(arg.value)
-      }));
-      const case_id = invocation.id === void 0 ? `args:${JSON.stringify(args)}` : `id:${invocation.id}`;
-      const key = JSON.stringify([invocation.function_name, case_id]);
-      if (caseIds.has(key)) {
-        throw new Error(
-          `Duplicate benchmark identity in ${logical_id}: ${invocation.function_name} / ${case_id}. Set distinct invocation ids.`
-        );
-      }
-      caseIds.add(key);
-      return { ...invocation, case_id };
-    });
-    return { ...contract, logical_id, invocations };
-  });
-  return { ...fixtures, fixture_id, contracts };
-}
-
 // node_modules/@stellar/stellar-sdk/lib/esm/utils.js
 var Utils = class {
   /**
@@ -53248,6 +51939,1353 @@ var RpcServer = class {
     );
   }
 };
+
+// src/record-schema.ts
+var METRIC_KEYS = [
+  "cpu_instructions",
+  "memory_bytes",
+  "ledger_read_entries",
+  "ledger_read_bytes",
+  "ledger_write_entries",
+  "ledger_write_bytes",
+  "historical_data_read_bytes",
+  "contract_data_hard_limit",
+  "tx_size_bytes",
+  "events_count",
+  "event_data_bytes"
+];
+var MeasurementRecordValidationError = class extends Error {
+  path;
+  version;
+  code;
+  diagnostics;
+  constructor(diagnostics) {
+    const first = diagnostics[0] ?? {
+      path: "$",
+      version: "unknown",
+      code: "INVALID_RECORD",
+      message: "Invalid measurement record"
+    };
+    super(`${first.message} [path: ${first.path}]`);
+    this.name = "MeasurementRecordValidationError";
+    this.path = first.path;
+    this.version = first.version;
+    this.code = first.code;
+    this.diagnostics = diagnostics;
+  }
+};
+var CONTRACT_ALLOWED_KEYS = /* @__PURE__ */ new Set([
+  "schema_version",
+  "fixture_id",
+  "logical_id",
+  "contract_id",
+  "git_commit",
+  "soroban_sdk_version",
+  "timestamp",
+  "benchmarks"
+]);
+var BENCHMARK_ALLOWED_KEYS = /* @__PURE__ */ new Set([
+  "function_name",
+  "case_id",
+  "metrics",
+  "wasm_sha256",
+  "provenance"
+]);
+var METRIC_VALUE_ALLOWED_KEYS = /* @__PURE__ */ new Set([
+  "availability",
+  "consumed",
+  "limit",
+  "reason",
+  "source",
+  "limit_source",
+  "limit_reason"
+]);
+var PROVENANCE_ALLOWED_KEYS = /* @__PURE__ */ new Set([
+  "source",
+  "source_version",
+  "protocol",
+  "helper_sha256",
+  "network_id",
+  "ledger",
+  "header_sha256",
+  "snapshot_sha256",
+  "config_sha256",
+  "compute_config_sha256",
+  "input_sha256",
+  "seed",
+  "auth_mode",
+  "host_features",
+  "resource_limits_sha256",
+  "source_account"
+]);
+var PROVENANCE_REQUIRED_STRINGS = [
+  "source",
+  "source_version",
+  "helper_sha256",
+  "network_id",
+  "compute_config_sha256",
+  "header_sha256",
+  "snapshot_sha256",
+  "config_sha256",
+  "input_sha256",
+  "auth_mode"
+];
+var METRIC_KEY_SET = new Set(METRIC_KEYS);
+var SHA256_HEX_PATTERN = /^[a-f0-9]{64}$/;
+var ACCOUNT_PUBLIC_KEY_PATTERN = /^G[A-Z2-7]{55}$/;
+function isPlainObject3(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+function nonblank(value) {
+  return typeof value === "string" && value.trim().length > 0;
+}
+function detectRecordEnvelopeVersion(record) {
+  if (!isPlainObject3(record)) return "unknown";
+  const hasLogical = record.schema_version !== void 0 || record.fixture_id !== void 0 || record.logical_id !== void 0;
+  if (!hasLogical) return "legacy";
+  if (record.schema_version === 2 || record.schema_version === 3 || record.schema_version === 4) {
+    return record.schema_version;
+  }
+  return "unknown";
+}
+function validateProvenanceObject(provenance, version2, pPath, diagnostics) {
+  if (!isPlainObject3(provenance)) {
+    diagnostics.push({
+      path: pPath,
+      version: version2,
+      code: "INVALID_PROVENANCE_OBJECT",
+      message: `Schema ${version2} benchmarks require compute provenance`
+    });
+    return;
+  }
+  for (const key of Object.keys(provenance)) {
+    if (!PROVENANCE_ALLOWED_KEYS.has(key)) {
+      diagnostics.push({
+        path: `${pPath}.${key}`,
+        version: version2,
+        code: "UNKNOWN_PROVENANCE_FIELD",
+        message: `Invalid compute provenance: unexpected field ${key}`
+      });
+    }
+  }
+  for (const field of PROVENANCE_REQUIRED_STRINGS) {
+    if (!nonblank(provenance[field])) {
+      diagnostics.push({
+        path: `${pPath}.${field}`,
+        version: version2,
+        code: "INVALID_PROVENANCE_FIELD",
+        message: `Invalid compute provenance: ${field}`
+      });
+    }
+  }
+  if (!Number.isSafeInteger(provenance.ledger) || provenance.ledger < 0) {
+    diagnostics.push({
+      path: `${pPath}.ledger`,
+      version: version2,
+      code: "INVALID_PROVENANCE_LEDGER",
+      message: "Invalid compute provenance: ledger/protocol/host_features"
+    });
+  }
+  if (!Number.isSafeInteger(provenance.protocol) || provenance.protocol <= 0) {
+    diagnostics.push({
+      path: `${pPath}.protocol`,
+      version: version2,
+      code: "INVALID_PROVENANCE_PROTOCOL",
+      message: "Invalid compute provenance: ledger/protocol/host_features"
+    });
+  }
+  if (!Array.isArray(provenance.host_features) || !provenance.host_features.every(nonblank)) {
+    diagnostics.push({
+      path: `${pPath}.host_features`,
+      version: version2,
+      code: "INVALID_PROVENANCE_HOST_FEATURES",
+      message: "Invalid compute provenance: ledger/protocol/host_features"
+    });
+  }
+  if (!Array.isArray(provenance.seed) || provenance.seed.length !== 32 || !provenance.seed.every(
+    (value) => Number.isInteger(value) && value >= 0 && value <= 255
+  )) {
+    diagnostics.push({
+      path: `${pPath}.seed`,
+      version: version2,
+      code: "INVALID_PROVENANCE_SEED",
+      message: "Invalid compute provenance: seed"
+    });
+  }
+  if (provenance.resource_limits_sha256 !== void 0 && (typeof provenance.resource_limits_sha256 !== "string" || !SHA256_HEX_PATTERN.test(provenance.resource_limits_sha256))) {
+    diagnostics.push({
+      path: `${pPath}.resource_limits_sha256`,
+      version: version2,
+      code: "INVALID_RESOURCE_LIMITS_DIGEST",
+      message: "Schema 4 requires resource_limits_sha256"
+    });
+  }
+  if (provenance.source_account !== void 0 && (typeof provenance.source_account !== "string" || !ACCOUNT_PUBLIC_KEY_PATTERN.test(provenance.source_account))) {
+    diagnostics.push({
+      path: `${pPath}.source_account`,
+      version: version2,
+      code: "INVALID_SOURCE_ACCOUNT",
+      message: "Invalid compute provenance: source_account must be an Ed25519 account public key"
+    });
+  }
+}
+function inspectMeasurementRecord(value, index) {
+  const basePath = index === void 0 ? "$" : `$[${index}]`;
+  const diagnostics = [];
+  if (!isPlainObject3(value)) {
+    diagnostics.push({
+      path: basePath,
+      version: "unknown",
+      code: "INVALID_RECORD_OBJECT",
+      message: "Invalid measurement record: expected object"
+    });
+    return { valid: false, version: "unknown", diagnostics };
+  }
+  const version2 = detectRecordEnvelopeVersion(value);
+  for (const key of Object.keys(value)) {
+    if (!CONTRACT_ALLOWED_KEYS.has(key)) {
+      diagnostics.push({
+        path: `${basePath}.${key}`,
+        version: version2,
+        code: "UNKNOWN_CONTRACT_FIELD",
+        message: `Unexpected field in measurement record: ${key}`
+      });
+    }
+  }
+  const hasLogical = value.schema_version !== void 0 || value.fixture_id !== void 0 || value.logical_id !== void 0;
+  const benchmarksArray = Array.isArray(value.benchmarks) ? value.benchmarks : null;
+  let contractKey;
+  if (!hasLogical) {
+    if (benchmarksArray) {
+      benchmarksArray.forEach((fn, bIdx) => {
+        if (isPlainObject3(fn) && fn.case_id !== void 0) {
+          diagnostics.push({
+            path: `${basePath}.benchmarks[${bIdx}].case_id`,
+            version: "legacy",
+            code: "LEGACY_CASE_ID_FORBIDDEN",
+            message: "Case identity requires fixture and logical contract identities"
+          });
+        }
+      });
+    }
+    if (nonblank(value.contract_id)) {
+      contractKey = JSON.stringify(["legacy", value.contract_id]);
+    }
+  } else {
+    if (value.schema_version !== 2 && value.schema_version !== 3 && value.schema_version !== 4) {
+      diagnostics.push({
+        path: `${basePath}.schema_version`,
+        version: "unknown",
+        code: "UNSUPPORTED_SCHEMA_VERSION",
+        message: "Version 2/3/4 results require fixture_id, logical_id, and case_id for every benchmark"
+      });
+    }
+    if (!nonblank(value.fixture_id)) {
+      diagnostics.push({
+        path: `${basePath}.fixture_id`,
+        version: version2,
+        code: "MISSING_FIXTURE_ID",
+        message: "Version 2/3/4 results require fixture_id, logical_id, and case_id for every benchmark"
+      });
+    }
+    if (!nonblank(value.logical_id)) {
+      diagnostics.push({
+        path: `${basePath}.logical_id`,
+        version: version2,
+        code: "MISSING_LOGICAL_ID",
+        message: "Version 2/3/4 results require fixture_id, logical_id, and case_id for every benchmark"
+      });
+    }
+    if (benchmarksArray) {
+      benchmarksArray.forEach((fn, bIdx) => {
+        if (!isPlainObject3(fn) || !nonblank(fn.case_id)) {
+          diagnostics.push({
+            path: `${basePath}.benchmarks[${bIdx}].case_id`,
+            version: version2,
+            code: "MISSING_CASE_ID",
+            message: "Version 2/3/4 results require fixture_id, logical_id, and case_id for every benchmark"
+          });
+        }
+      });
+    }
+    if ((version2 === 2 || version2 === 3 || version2 === 4) && nonblank(value.fixture_id) && nonblank(value.logical_id)) {
+      contractKey = JSON.stringify([
+        "logical",
+        value.fixture_id,
+        value.logical_id
+      ]);
+    }
+  }
+  if (!nonblank(value.contract_id)) {
+    diagnostics.push({
+      path: `${basePath}.contract_id`,
+      version: version2,
+      code: "INVALID_CONTRACT_ID",
+      message: "Contract contract_id must not be blank"
+    });
+  }
+  if (!nonblank(value.git_commit)) {
+    diagnostics.push({
+      path: `${basePath}.git_commit`,
+      version: version2,
+      code: "INVALID_GIT_COMMIT",
+      message: "Contract git_commit must not be blank"
+    });
+  }
+  if (!nonblank(value.soroban_sdk_version)) {
+    diagnostics.push({
+      path: `${basePath}.soroban_sdk_version`,
+      version: version2,
+      code: "INVALID_SDK_VERSION",
+      message: "Contract soroban_sdk_version must not be blank"
+    });
+  }
+  if (!Number.isSafeInteger(value.timestamp) || value.timestamp < 0) {
+    diagnostics.push({
+      path: `${basePath}.timestamp`,
+      version: version2,
+      code: "INVALID_TIMESTAMP",
+      message: "Contract timestamp must be a non-negative safe integer"
+    });
+  }
+  if (!benchmarksArray) {
+    diagnostics.push({
+      path: `${basePath}.benchmarks`,
+      version: version2,
+      code: "INVALID_BENCHMARKS_ARRAY",
+      message: "Contract benchmarks must be an array"
+    });
+    return { valid: false, version: version2, diagnostics };
+  }
+  const seenBenchmarks = /* @__PURE__ */ new Set();
+  benchmarksArray.forEach((benchmark, bIdx) => {
+    const bPath = `${basePath}.benchmarks[${bIdx}]`;
+    if (!isPlainObject3(benchmark)) {
+      diagnostics.push({
+        path: bPath,
+        version: version2,
+        code: "INVALID_BENCHMARK_OBJECT",
+        message: "Invalid benchmark result: expected object"
+      });
+      return;
+    }
+    for (const key of Object.keys(benchmark)) {
+      if (!BENCHMARK_ALLOWED_KEYS.has(key)) {
+        diagnostics.push({
+          path: `${bPath}.${key}`,
+          version: version2,
+          code: "UNKNOWN_BENCHMARK_FIELD",
+          message: `Unexpected field in benchmark record: ${key}`
+        });
+      }
+    }
+    if (!nonblank(benchmark.function_name)) {
+      diagnostics.push({
+        path: `${bPath}.function_name`,
+        version: version2,
+        code: "INVALID_FUNCTION_NAME",
+        message: "Benchmark function_name must not be blank"
+      });
+    } else {
+      const benchKey = JSON.stringify([
+        benchmark.function_name,
+        benchmark.case_id ?? null
+      ]);
+      if (seenBenchmarks.has(benchKey)) {
+        diagnostics.push({
+          path: bPath,
+          version: version2,
+          code: "DUPLICATE_BENCHMARK_IDENTITY",
+          message: `Duplicate benchmark identity: ${benchKey}`
+        });
+      } else {
+        seenBenchmarks.add(benchKey);
+      }
+    }
+    if (!nonblank(benchmark.wasm_sha256)) {
+      diagnostics.push({
+        path: `${bPath}.wasm_sha256`,
+        version: version2,
+        code: "INVALID_WASM_SHA256",
+        message: "Benchmark wasm_sha256 must not be blank"
+      });
+    }
+    const metricsObj = benchmark.metrics;
+    if (!isPlainObject3(metricsObj)) {
+      diagnostics.push({
+        path: `${bPath}.metrics`,
+        version: version2,
+        code: "INVALID_METRICS_OBJECT",
+        message: "Missing metric cpu_instructions; use an explicit unavailable record"
+      });
+    } else {
+      for (const extraKey of Object.keys(metricsObj)) {
+        if (!METRIC_KEY_SET.has(extraKey)) {
+          diagnostics.push({
+            path: `${bPath}.metrics.${extraKey}`,
+            version: version2,
+            code: "UNKNOWN_METRIC_KEY",
+            message: `Unexpected metric key: ${extraKey}`
+          });
+        }
+      }
+      for (const key of METRIC_KEYS) {
+        const mPath = `${bPath}.metrics.${key}`;
+        const metricVal = metricsObj[key];
+        if (!isPlainObject3(metricVal)) {
+          diagnostics.push({
+            path: mPath,
+            version: version2,
+            code: "MISSING_METRIC",
+            message: `Missing metric ${key}; use an explicit unavailable record`
+          });
+          continue;
+        }
+        for (const fieldKey of Object.keys(metricVal)) {
+          if (!METRIC_VALUE_ALLOWED_KEYS.has(fieldKey)) {
+            diagnostics.push({
+              path: `${mPath}.${fieldKey}`,
+              version: version2,
+              code: "UNKNOWN_METRIC_FIELD",
+              message: `Invalid metric field ${key}.${fieldKey}`
+            });
+          }
+        }
+        if (metricVal.availability !== void 0 && metricVal.availability !== "measured" && metricVal.availability !== "unavailable") {
+          diagnostics.push({
+            path: `${mPath}.availability`,
+            version: version2,
+            code: "INVALID_METRIC_AVAILABILITY",
+            message: `Invalid metric availability ${key}`
+          });
+        }
+        if (metricVal.availability === "unavailable") {
+          if (metricVal.consumed !== null || !nonblank(metricVal.reason)) {
+            diagnostics.push({
+              path: metricVal.consumed !== null ? `${mPath}.consumed` : `${mPath}.reason`,
+              version: version2,
+              code: "INVALID_UNAVAILABLE_METRIC",
+              message: `Invalid unavailable metric ${key}`
+            });
+          }
+        } else if (metricVal.consumed === null || !Number.isSafeInteger(metricVal.consumed) || metricVal.consumed < 0) {
+          diagnostics.push({
+            path: `${mPath}.consumed`,
+            version: version2,
+            code: "INVALID_MEASURED_METRIC",
+            message: `Invalid measured metric ${key}`
+          });
+        }
+        if (metricVal.limit !== null && (!Number.isSafeInteger(metricVal.limit) || metricVal.limit < 0)) {
+          diagnostics.push({
+            path: `${mPath}.limit`,
+            version: version2,
+            code: "INVALID_METRIC_LIMIT",
+            message: `Invalid metric limit ${key}`
+          });
+        }
+      }
+    }
+    if (version2 === 3 || version2 === 4) {
+      if (!benchmark.provenance) {
+        diagnostics.push({
+          path: `${bPath}.provenance`,
+          version: version2,
+          code: "MISSING_PROVENANCE",
+          message: `Schema ${version2} benchmarks require compute provenance`
+        });
+      } else {
+        validateProvenanceObject(
+          benchmark.provenance,
+          version2,
+          `${bPath}.provenance`,
+          diagnostics
+        );
+      }
+      if (isPlainObject3(metricsObj)) {
+        for (const key of METRIC_KEYS) {
+          const mPath = `${bPath}.metrics.${key}`;
+          const metricVal = metricsObj[key];
+          if (!isPlainObject3(metricVal)) continue;
+          if (metricVal.availability === void 0 || metricVal.availability === "measured" && !nonblank(metricVal.source)) {
+            diagnostics.push({
+              path: metricVal.availability === void 0 ? `${mPath}.availability` : `${mPath}.source`,
+              version: version2,
+              code: "MISSING_METRIC_SOURCE_OR_AVAILABILITY",
+              message: `Schema ${version2} requires explicit availability and measured source for ${key}`
+            });
+          }
+          if (version2 === 4 && metricVal.availability === "measured") {
+            if (metricVal.limit === null ? !nonblank(metricVal.limit_reason) : !nonblank(metricVal.limit_source)) {
+              diagnostics.push({
+                path: metricVal.limit === null ? `${mPath}.limit_reason` : `${mPath}.limit_source`,
+                version: version2,
+                code: "MISSING_METRIC_LIMIT_PROVENANCE",
+                message: `Schema 4 requires explicit limit provenance for ${key}`
+              });
+            }
+          }
+        }
+      }
+      if (version2 === 4 && isPlainObject3(benchmark.provenance) && !SHA256_HEX_PATTERN.test(
+        benchmark.provenance.resource_limits_sha256 ?? ""
+      )) {
+        const alreadyReported = diagnostics.some(
+          (d) => d.path === `${bPath}.provenance.resource_limits_sha256`
+        );
+        if (!alreadyReported) {
+          diagnostics.push({
+            path: `${bPath}.provenance.resource_limits_sha256`,
+            version: version2,
+            code: "MISSING_RESOURCE_LIMITS_DIGEST",
+            message: "Schema 4 requires resource_limits_sha256"
+          });
+        }
+      }
+    } else if (benchmark.provenance !== void 0) {
+      validateProvenanceObject(
+        benchmark.provenance,
+        version2,
+        `${bPath}.provenance`,
+        diagnostics
+      );
+    }
+  });
+  if (diagnostics.length > 0) {
+    return { valid: false, version: version2, diagnostics };
+  }
+  return {
+    valid: true,
+    version: version2,
+    contractKey,
+    record: value,
+    diagnostics: []
+  };
+}
+function inspectMeasurementRecords(value) {
+  if (!Array.isArray(value)) {
+    return {
+      valid: false,
+      version: "unknown",
+      diagnostics: [
+        {
+          path: "$",
+          version: "unknown",
+          code: "INVALID_RECORDS_ARRAY",
+          message: "Invalid measurement records: expected array"
+        }
+      ]
+    };
+  }
+  const diagnostics = [];
+  const seenContractKeys = /* @__PURE__ */ new Set();
+  const records = [];
+  let detectedVersion = null;
+  value.forEach((item, index) => {
+    const single = inspectMeasurementRecord(item, index);
+    if (detectedVersion === null) {
+      detectedVersion = single.version;
+    } else if (single.version !== "unknown" && detectedVersion !== "unknown" && single.version !== detectedVersion) {
+      diagnostics.push({
+        path: `$[${index}].schema_version`,
+        version: single.version,
+        code: "MIXED_SCHEMA_VERSIONS",
+        message: "Cannot compare measurements with different schema versions"
+      });
+    }
+    if (single.contractKey !== void 0) {
+      if (seenContractKeys.has(single.contractKey)) {
+        diagnostics.push({
+          path: `$[${index}]`,
+          version: single.version,
+          code: "DUPLICATE_CONTRACT_IDENTITY",
+          message: `Duplicate logical contract identity: ${single.contractKey}`
+        });
+      } else {
+        seenContractKeys.add(single.contractKey);
+      }
+    }
+    if (single.diagnostics.length > 0) {
+      diagnostics.push(...single.diagnostics);
+    } else if (single.record) {
+      records.push(single.record);
+    }
+  });
+  if (diagnostics.length > 0) {
+    return {
+      valid: false,
+      version: detectedVersion,
+      diagnostics
+    };
+  }
+  return {
+    valid: true,
+    version: detectedVersion,
+    records,
+    diagnostics: []
+  };
+}
+function validateMeasurementRecords(value) {
+  const result = inspectMeasurementRecords(value);
+  if (!result.valid || !result.records) {
+    throw new MeasurementRecordValidationError(result.diagnostics);
+  }
+  return result.records;
+}
+function resolveContractIdentityKey(contract, index) {
+  const result = inspectMeasurementRecord(contract, index);
+  if (!result.valid || !result.contractKey) {
+    throw new MeasurementRecordValidationError(result.diagnostics);
+  }
+  return result.contractKey;
+}
+function validateBenchmarkComparisonCompatibility(baseFn, headFn) {
+  if (!baseFn.provenance && !headFn.provenance) {
+    return;
+  }
+  const fields = [
+    "source",
+    "source_version",
+    "protocol",
+    "helper_sha256",
+    "network_id",
+    "compute_config_sha256",
+    "seed",
+    "auth_mode",
+    "host_features",
+    // The invoking account is part of the measured environment: results
+    // measured under different source accounts are not comparable.
+    "source_account"
+  ];
+  for (const field of fields) {
+    if (!baseFn.provenance || !headFn.provenance || JSON.stringify(baseFn.provenance[field]) !== JSON.stringify(headFn.provenance[field])) {
+      throw new Error(`Incompatible measurement environment: ${field}`);
+    }
+  }
+  if (JSON.stringify(baseFn.provenance?.resource_limits_sha256) !== JSON.stringify(headFn.provenance?.resource_limits_sha256)) {
+    throw new Error(
+      "Incompatible measurement environment: resource_limits_sha256"
+    );
+  }
+  if (headFn.provenance?.resource_limits_sha256) {
+    for (const metric of METRIC_KEYS) {
+      for (const field of [
+        "availability",
+        "source",
+        "limit",
+        "limit_source",
+        "limit_reason"
+      ]) {
+        if (baseFn.metrics[metric][field] !== headFn.metrics[metric][field]) {
+          throw new Error(`Incompatible metric semantics: ${metric}.${field}`);
+        }
+      }
+    }
+  }
+}
+
+// src/diff.ts
+var AGGREGATE_METRIC_DESCRIPTIONS = {
+  cpu_instructions: "Cumulative CPU Instructions",
+  memory_bytes: "Cumulative Invocation Memory Bytes (sum of invocation costs, not peak concurrent memory)",
+  ledger_read_entries: "Cumulative Footprint Read Entries (RO + RW)",
+  ledger_read_bytes: "Cumulative Disk Read Bytes",
+  ledger_write_entries: "Cumulative Write Footprint Entries",
+  ledger_write_bytes: "Cumulative Ledger Write Bytes",
+  historical_data_read_bytes: "Cumulative Historical Read Bytes",
+  contract_data_hard_limit: "Cumulative Contract Data (instance)",
+  tx_size_bytes: "Cumulative Tx Size Bytes",
+  events_count: "Cumulative Successful Contract/System Events",
+  event_data_bytes: "Cumulative Events + Return XDR Bytes"
+};
+function diffMetrics(base, head) {
+  return METRIC_KEYS.map((key) => {
+    const b = base[key];
+    const h = head[key];
+    if (b.consumed === null || h.consumed === null) {
+      return {
+        key,
+        base: b,
+        head: h,
+        availability: "unavailable",
+        reason: [
+          b.reason && `BASE: ${b.reason}`,
+          h.reason && `HEAD: ${h.reason}`
+        ].filter(Boolean).join("; "),
+        delta: null,
+        pct: null,
+        regression: false
+      };
+    }
+    const delta = h.consumed - b.consumed;
+    const pct = b.consumed === 0 ? null : delta / b.consumed * 100;
+    return {
+      key,
+      base: b,
+      head: h,
+      availability: "comparable",
+      delta,
+      pct,
+      regression: delta > 0
+    };
+  });
+}
+function diffFunctions(baseFns, headFns) {
+  const baseMap = benchmarkMap(baseFns);
+  const headMap = benchmarkMap(headFns);
+  const baseNames = new Set(baseFns.map((fn) => fn.function_name));
+  const headNames = new Set(headFns.map((fn) => fn.function_name));
+  const newFunctions = [...headNames].filter((name) => !baseNames.has(name));
+  const removedFunctions = [...baseNames].filter(
+    (name) => !headNames.has(name)
+  );
+  const newBenchmarks = [];
+  const removedBenchmarks = [];
+  const functions = [];
+  for (const [key, fn] of headMap) {
+    if (!baseMap.has(key)) newBenchmarks.push(benchmarkIdentity(fn));
+  }
+  for (const [key, fn] of baseMap) {
+    if (!headMap.has(key)) removedBenchmarks.push(benchmarkIdentity(fn));
+  }
+  for (const [key, headFn] of headMap) {
+    const baseFn = baseMap.get(key);
+    if (!baseFn) continue;
+    validateBenchmarkComparisonCompatibility(baseFn, headFn);
+    const metrics = diffMetrics(baseFn.metrics, headFn.metrics);
+    const hasRegression = metrics.some((m) => m.regression);
+    functions.push({
+      ...benchmarkIdentity(headFn),
+      metrics,
+      hasRegression,
+      base_provenance: baseFn.provenance,
+      head_provenance: headFn.provenance
+    });
+  }
+  return {
+    functions,
+    newFunctions,
+    removedFunctions,
+    newBenchmarks,
+    removedBenchmarks
+  };
+}
+function benchmarkIdentity(fn) {
+  return {
+    function_name: fn.function_name,
+    ...fn.case_id === void 0 ? {} : { case_id: fn.case_id }
+  };
+}
+function benchmarkMap(functions) {
+  const result = /* @__PURE__ */ new Map();
+  for (const fn of functions) {
+    const key = JSON.stringify([fn.function_name, fn.case_id ?? null]);
+    result.set(key, fn);
+  }
+  return result;
+}
+function contractMap(contracts) {
+  const validated = validateMeasurementRecords(contracts);
+  const result = /* @__PURE__ */ new Map();
+  validated.forEach((contract, index) => {
+    const key = resolveContractIdentityKey(contract, index);
+    result.set(key, contract);
+  });
+  return result;
+}
+function contractLabel(contract) {
+  return contract.logical_id === void 0 ? contract.contract_id : `${contract.fixture_id} / ${contract.logical_id}`;
+}
+function matchesSelector(selector, candidate) {
+  if (selector.function_name !== candidate.function_name) return false;
+  if (selector.fixture_id !== void 0 && selector.fixture_id !== candidate.fixture_id)
+    return false;
+  if (selector.logical_id !== void 0 && selector.logical_id !== candidate.logical_id)
+    return false;
+  if (selector.case_id !== void 0 && selector.case_id !== candidate.case_id)
+    return false;
+  return true;
+}
+function formatSelector(sel) {
+  const parts = [];
+  if (sel.fixture_id) parts.push(`fixture:${sel.fixture_id}`);
+  if (sel.logical_id) parts.push(`contract:${sel.logical_id}`);
+  parts.push(`fn:${sel.function_name}`);
+  if (sel.case_id) parts.push(`case:${sel.case_id}`);
+  return parts.join(" / ");
+}
+function computeAggregateDiffs(diff, config2) {
+  if (!config2) return [];
+  const aggregateNames = /* @__PURE__ */ new Set();
+  if (config2.aggregates) {
+    for (const name of Object.keys(config2.aggregates)) aggregateNames.add(name);
+  }
+  if (config2.limits?.aggregates) {
+    for (const name of Object.keys(config2.limits.aggregates))
+      aggregateNames.add(name);
+  }
+  if (config2.thresholds?.aggregates) {
+    for (const name of Object.keys(config2.thresholds.aggregates))
+      aggregateNames.add(name);
+  }
+  if (aggregateNames.size === 0) return [];
+  const aggregateDiffs = [];
+  for (const name of aggregateNames) {
+    const aggDef = config2.aggregates?.[name];
+    if (!aggDef || !aggDef.members || !Array.isArray(aggDef.members) || aggDef.members.length === 0) {
+      throw new Error(
+        `Cannot evaluate aggregate budget "${name}": missing required member selectors in [aggregates.${name}]`
+      );
+    }
+    const seenSelectors = /* @__PURE__ */ new Set();
+    for (const member of aggDef.members) {
+      if (!member.function_name) {
+        throw new Error(
+          `Cannot evaluate aggregate budget "${name}": member selector missing required function_name`
+        );
+      }
+      const selKey = JSON.stringify([
+        member.fixture_id ?? "",
+        member.logical_id ?? "",
+        member.function_name,
+        member.case_id ?? ""
+      ]);
+      if (seenSelectors.has(selKey)) {
+        throw new Error(
+          `Cannot evaluate aggregate budget "${name}": duplicate member selector ${formatSelector(member)}`
+        );
+      }
+      seenSelectors.add(selKey);
+    }
+    const resolvedMembers = [];
+    const matchedCanonicalKeys = /* @__PURE__ */ new Set();
+    for (const member of aggDef.members) {
+      const matches = [];
+      for (const contract2 of diff.contracts) {
+        for (const fn2 of contract2.functions) {
+          if (matchesSelector(member, {
+            fixture_id: contract2.fixture_id,
+            logical_id: contract2.logical_id,
+            function_name: fn2.function_name,
+            case_id: fn2.case_id
+          })) {
+            matches.push({ contract: contract2, fn: fn2 });
+          }
+        }
+      }
+      if (matches.length === 0) {
+        throw new Error(
+          `Cannot evaluate aggregate budget "${name}": member ${formatSelector(member)} has no matched BASE/HEAD benchmark`
+        );
+      }
+      if (matches.length > 1) {
+        throw new Error(
+          `Cannot evaluate aggregate budget "${name}": member ${formatSelector(member)} is ambiguous (matched ${matches.length} benchmarks)`
+        );
+      }
+      const { contract, fn } = matches[0];
+      const canonicalKey = JSON.stringify([
+        contract.fixture_id ?? "",
+        contract.logical_id ?? "",
+        fn.function_name,
+        fn.case_id ?? ""
+      ]);
+      if (matchedCanonicalKeys.has(canonicalKey)) {
+        throw new Error(
+          `Cannot evaluate aggregate budget "${name}": duplicate member detected for benchmark "${contract.logical_id ?? contract.contract_id} / ${fn.function_name}${fn.case_id ? ` / ${fn.case_id}` : ""}"`
+        );
+      }
+      matchedCanonicalKeys.add(canonicalKey);
+      resolvedMembers.push({ selector: member, contract, fn, canonicalKey });
+    }
+    let commonSource;
+    let commonProtocol;
+    let commonNetwork;
+    let commonComputeConfig;
+    let commonLimitsConfig;
+    for (const { fn } of resolvedMembers) {
+      const prov = fn.head_provenance;
+      if (!prov) continue;
+      if (commonSource === void 0) {
+        commonSource = prov.source;
+        commonProtocol = prov.protocol;
+        commonNetwork = prov.network_id;
+        commonComputeConfig = prov.compute_config_sha256;
+        commonLimitsConfig = prov.resource_limits_sha256;
+      } else {
+        if (prov.source !== commonSource) {
+          throw new Error(
+            `Cannot evaluate aggregate budget "${name}": incompatible measurement environments across members (mismatched meter source: ${commonSource} vs ${prov.source})`
+          );
+        }
+        if (prov.protocol !== commonProtocol) {
+          throw new Error(
+            `Cannot evaluate aggregate budget "${name}": incompatible measurement environments across members (mismatched protocol: ${commonProtocol} vs ${prov.protocol})`
+          );
+        }
+        if (prov.network_id !== commonNetwork) {
+          throw new Error(
+            `Cannot evaluate aggregate budget "${name}": incompatible measurement environments across members (mismatched network: ${commonNetwork} vs ${prov.network_id})`
+          );
+        }
+        if (prov.compute_config_sha256 !== commonComputeConfig) {
+          throw new Error(
+            `Cannot evaluate aggregate budget "${name}": incompatible measurement environments across members (mismatched compute configuration / calibration)`
+          );
+        }
+        if (prov.resource_limits_sha256 !== commonLimitsConfig) {
+          throw new Error(
+            `Cannot evaluate aggregate budget "${name}": incompatible measurement environments across members (mismatched resource limits configuration)`
+          );
+        }
+      }
+    }
+    const breakdown = {};
+    const metrics = [];
+    for (const key of METRIC_KEYS) {
+      const memberRows = [];
+      let allComparable = true;
+      let unavailableReason;
+      let baseSum = 0;
+      let headSum = 0;
+      for (const { contract, fn } of resolvedMembers) {
+        const mDiff = fn.metrics.find((m) => m.key === key);
+        const baseVal = mDiff?.base.consumed ?? null;
+        const headVal = mDiff?.head.consumed ?? null;
+        const delta = mDiff?.delta ?? (baseVal !== null && headVal !== null ? headVal - baseVal : null);
+        memberRows.push({
+          fixture_id: contract.fixture_id,
+          logical_id: contract.logical_id,
+          contract_id: contract.head_contract_id || contract.contract_id,
+          function_name: fn.function_name,
+          case_id: fn.case_id,
+          base_consumed: baseVal,
+          head_consumed: headVal,
+          delta
+        });
+        if (!mDiff || mDiff.availability === "unavailable" || baseVal === null || headVal === null) {
+          allComparable = false;
+          if (!unavailableReason) {
+            unavailableReason = `Member ${contract.logical_id ?? contract.contract_id} / ${fn.function_name}${fn.case_id ? ` / ${fn.case_id}` : ""} ${key} is unavailable: ${mDiff?.reason ?? "measured value unavailable"}`;
+          }
+        } else {
+          baseSum += baseVal;
+          headSum += headVal;
+        }
+      }
+      breakdown[key] = memberRows;
+      if (!allComparable) {
+        metrics.push({
+          key,
+          base_consumed: null,
+          head_consumed: null,
+          delta: null,
+          pct: null,
+          regression: false,
+          availability: "unavailable",
+          reason: unavailableReason,
+          description: AGGREGATE_METRIC_DESCRIPTIONS[key]
+        });
+      } else {
+        const delta = headSum - baseSum;
+        const regression = delta > 0;
+        const pct = baseSum === 0 ? delta > 0 ? null : 0 : delta / baseSum * 100;
+        metrics.push({
+          key,
+          base_consumed: baseSum,
+          head_consumed: headSum,
+          delta,
+          pct,
+          regression,
+          availability: "comparable",
+          description: AGGREGATE_METRIC_DESCRIPTIONS[key]
+        });
+      }
+    }
+    const hasRegression = metrics.some((m) => m.regression);
+    const provenance = commonSource ? {
+      source: commonSource,
+      protocol_version: commonProtocol ?? 0,
+      network_passphrase: commonNetwork ?? "",
+      compute_config_sha256: commonComputeConfig
+    } : void 0;
+    aggregateDiffs.push({
+      name,
+      description: aggDef.description,
+      members: aggDef.members,
+      member_count: resolvedMembers.length,
+      breakdown,
+      metrics,
+      provenance,
+      hasRegression
+    });
+  }
+  diff.aggregates = aggregateDiffs;
+  if (aggregateDiffs.some((a) => a.hasRegression)) {
+    diff.hasRegression = true;
+  }
+  return aggregateDiffs;
+}
+function diffBenchmarks(base, head, config2) {
+  const baseMap = contractMap(base);
+  const headMap = contractMap(head);
+  if (base.length > 0 && head.length > 0 && base[0].schema_version !== void 0 && head[0].schema_version !== void 0 && base[0].schema_version !== head[0].schema_version) {
+    throw new Error(
+      "Cannot compare measurements with different schema versions"
+    );
+  }
+  const newContracts = [];
+  const removedContracts = [];
+  const contracts = [];
+  for (const [key, contract] of headMap) {
+    if (!baseMap.has(key)) newContracts.push(contractLabel(contract));
+  }
+  for (const [key, contract] of baseMap) {
+    if (!headMap.has(key)) removedContracts.push(contractLabel(contract));
+  }
+  for (const [key, headContract] of headMap) {
+    const baseContract = baseMap.get(key);
+    if (!baseContract) continue;
+    if (baseContract.schema_version !== headContract.schema_version)
+      throw new Error(
+        "Cannot compare measurements with different schema versions"
+      );
+    const benchmarkDiff = diffFunctions(
+      baseContract.benchmarks,
+      headContract.benchmarks
+    );
+    const hasRegression = benchmarkDiff.functions.some((f) => f.hasRegression);
+    contracts.push({
+      fixture_id: headContract.fixture_id,
+      logical_id: headContract.logical_id,
+      contract_id: headContract.contract_id,
+      base_contract_id: baseContract.contract_id,
+      head_contract_id: headContract.contract_id,
+      base_commit: baseContract.git_commit,
+      head_commit: headContract.git_commit,
+      ...benchmarkDiff,
+      hasRegression
+    });
+  }
+  const diff = {
+    contracts,
+    hasRegression: contracts.some((c) => c.hasRegression),
+    newContracts,
+    removedContracts
+  };
+  if (config2) {
+    computeAggregateDiffs(diff, config2);
+  }
+  return diff;
+}
+
+// src/config.ts
+var RuleValueSchema = external_exports.union([
+  external_exports.number(),
+  external_exports.string().refine(
+    (val) => {
+      return val === "ignore" || val === "strict_zero_tolerance" || /^allow_[\d.]+_percent_increase$/.test(val);
+    },
+    {
+      message: "Invalid rule string. Must be 'ignore', 'strict_zero_tolerance', or 'allow_X_percent_increase'"
+    }
+  )
+]);
+var GlobalThresholdsSchema = external_exports.object({
+  fail_on_any_regression: external_exports.boolean().optional(),
+  max_allowed_cpu_increase_pct: external_exports.number().optional(),
+  max_allowed_memory_increase_pct: external_exports.number().optional()
+}).strict();
+var GlobalLimitsSchema = external_exports.record(
+  external_exports.enum(METRIC_KEYS),
+  external_exports.number().nonnegative()
+);
+var FunctionLimitsSchema = external_exports.record(
+  external_exports.enum(METRIC_KEYS),
+  external_exports.number().nonnegative()
+);
+var FunctionThresholdsSchema = external_exports.record(
+  external_exports.enum(METRIC_KEYS),
+  RuleValueSchema
+);
+var BenchmarkSelectorSchema = external_exports.object({
+  fixture_id: external_exports.string().min(1).optional(),
+  logical_id: external_exports.string().min(1).optional(),
+  function_name: external_exports.string().min(1),
+  case_id: external_exports.string().min(1).optional()
+}).strict();
+var AggregateBudgetConfigSchema = external_exports.object({
+  description: external_exports.string().optional(),
+  members: external_exports.array(BenchmarkSelectorSchema).min(1),
+  limits: external_exports.record(external_exports.enum(METRIC_KEYS), external_exports.number().nonnegative()).optional(),
+  thresholds: external_exports.record(external_exports.enum(METRIC_KEYS), RuleValueSchema).optional()
+}).strict();
+var WeighinConfigSchema = external_exports.object({
+  thresholds: external_exports.object({
+    global: GlobalThresholdsSchema.optional(),
+    functions: external_exports.record(external_exports.string(), FunctionThresholdsSchema).optional(),
+    aggregates: external_exports.record(external_exports.string(), FunctionThresholdsSchema).optional()
+  }).strict().optional(),
+  limits: external_exports.object({
+    global: GlobalLimitsSchema.optional(),
+    functions: external_exports.record(external_exports.string(), FunctionLimitsSchema).optional(),
+    aggregates: external_exports.record(external_exports.string(), FunctionLimitsSchema).optional()
+  }).strict().optional(),
+  aggregates: external_exports.record(external_exports.string(), AggregateBudgetConfigSchema).optional()
+}).strict();
+var U64_MAX = 18446744073709551615n;
+var I64_MIN = -9223372036854775808n;
+var I64_MAX = 9223372036854775807n;
+var U128_MAX = 340282366920938463463374607431768211455n;
+var I128_MIN = -170141183460469231731687303715884105728n;
+var I128_MAX = 170141183460469231731687303715884105727n;
+function validateLargeInt(type, val) {
+  if (typeof val !== "string") {
+    return `Invalid value for ${type}: must be a string to preserve precision`;
+  }
+  if (!/^-?\d+$/.test(val)) {
+    return `Invalid value for ${type}: must be a valid integer string`;
+  }
+  try {
+    const bi = BigInt(val);
+    switch (type) {
+      case "u64":
+        if (bi < 0n || bi > U64_MAX)
+          return `Invalid value for u64: out of bounds`;
+        break;
+      case "i64":
+        if (bi < I64_MIN || bi > I64_MAX)
+          return `Invalid value for i64: out of bounds`;
+        break;
+      case "u128":
+        if (bi < 0n || bi > U128_MAX)
+          return `Invalid value for u128: out of bounds`;
+        break;
+      case "i128":
+        if (bi < I128_MIN || bi > I128_MAX)
+          return `Invalid value for i128: out of bounds`;
+        break;
+    }
+  } catch {
+    return `Invalid value for ${type}: malformed integer string`;
+  }
+  return null;
+}
+var InvocationArgSchema = external_exports.lazy(
+  () => external_exports.object({
+    type: external_exports.preprocess(
+      (val) => typeof val === "string" ? val.toLowerCase() : val,
+      external_exports.enum([
+        "symbol",
+        "string",
+        "u32",
+        "i32",
+        "bool",
+        "u64",
+        "i64",
+        "u128",
+        "i128",
+        "address",
+        "bytes",
+        "vec",
+        "map"
+      ])
+    ),
+    value: external_exports.any()
+  }).strict().superRefine((data, ctx) => {
+    if (["u64", "i64", "u128", "i128"].includes(data.type)) {
+      const err = validateLargeInt(data.type, data.value);
+      if (err) {
+        ctx.addIssue({
+          code: external_exports.ZodIssueCode.custom,
+          message: err,
+          path: ["value"]
+        });
+      }
+    } else if (data.type === "address") {
+      if (typeof data.value !== "string") {
+        ctx.addIssue({
+          code: external_exports.ZodIssueCode.custom,
+          message: "Invalid value for address: must be string",
+          path: ["value"]
+        });
+      } else {
+        try {
+          Address.fromString(data.value);
+        } catch (error2) {
+          ctx.addIssue({
+            code: external_exports.ZodIssueCode.custom,
+            message: `Invalid value for address: ${error2.message}`,
+            path: ["value"]
+          });
+        }
+      }
+    } else if (data.type === "bytes") {
+      if (typeof data.value !== "string") {
+        ctx.addIssue({
+          code: external_exports.ZodIssueCode.custom,
+          message: "Invalid value for bytes: must be valid hex",
+          path: ["value"]
+        });
+      } else if (!/^[0-9a-fA-F]*$/.test(data.value)) {
+        ctx.addIssue({
+          code: external_exports.ZodIssueCode.custom,
+          message: "Invalid value for bytes: must be valid hex",
+          path: ["value"]
+        });
+      } else if (data.value.length % 2 !== 0) {
+        ctx.addIssue({
+          code: external_exports.ZodIssueCode.custom,
+          message: "Invalid value for bytes: hex string must have even length",
+          path: ["value"]
+        });
+      }
+    } else if (data.type === "vec") {
+      if (!Array.isArray(data.value)) {
+        ctx.addIssue({
+          code: external_exports.ZodIssueCode.custom,
+          message: "must be array",
+          path: ["value"]
+        });
+      } else {
+        data.value.forEach((val, idx) => {
+          const res = InvocationArgSchema.safeParse(val);
+          if (!res.success) {
+            res.error.issues.forEach((issue) => {
+              ctx.addIssue({ ...issue, path: ["value", idx, ...issue.path] });
+            });
+          } else {
+            data.value[idx] = res.data;
+          }
+        });
+      }
+    } else if (data.type === "map") {
+      if (!Array.isArray(data.value)) {
+        ctx.addIssue({
+          code: external_exports.ZodIssueCode.custom,
+          message: "must be array",
+          path: ["value"]
+        });
+      } else {
+        data.value.forEach((entry, idx) => {
+          if (!entry || !entry.key || !entry.value) {
+            ctx.addIssue({
+              code: external_exports.ZodIssueCode.custom,
+              message: "map entries must have key and value",
+              path: ["value", idx]
+            });
+          } else {
+            const resK = InvocationArgSchema.safeParse(entry.key);
+            if (!resK.success) {
+              resK.error.issues.forEach(
+                (issue) => ctx.addIssue({
+                  ...issue,
+                  path: ["value", idx, "key", ...issue.path]
+                })
+              );
+            } else {
+              data.value[idx].key = resK.data;
+            }
+            const resV = InvocationArgSchema.safeParse(entry.value);
+            if (!resV.success) {
+              resV.error.issues.forEach(
+                (issue) => ctx.addIssue({
+                  ...issue,
+                  path: ["value", idx, "value", ...issue.path]
+                })
+              );
+            } else {
+              data.value[idx].value = resV.data;
+            }
+          }
+        });
+      }
+    }
+  })
+);
+var idSchema = external_exports.string().refine((value) => value.trim().length > 0, "ID must not be blank");
+var InvocationSpecSchema = external_exports.object({
+  id: idSchema.optional(),
+  function_name: external_exports.string().min(1),
+  args: external_exports.array(InvocationArgSchema)
+}).strict();
+var ContractSpecSchema = external_exports.object({
+  id: idSchema.optional(),
+  wasm_path: external_exports.string().min(1),
+  invocations: external_exports.array(InvocationSpecSchema).min(1)
+}).strict();
+var FixturesSpecSchema = external_exports.object({
+  id: idSchema.optional(),
+  contracts: external_exports.array(ContractSpecSchema).min(1)
+}).strict();
+function formatZodError(error2, fileName) {
+  const lines = [`Invalid WeighIn configuration in ${fileName}:`];
+  for (const issue of error2.issues) {
+    const path7 = issue.path.join(".");
+    lines.push(`- ${path7 || "root"}: ${issue.message}`);
+  }
+  return lines.join("\n");
+}
+
+// src/identity.ts
+function relativePath(value) {
+  const portable = value.replace(/\\/g, "/");
+  if (path.posix.isAbsolute(portable) || /^[A-Za-z]:/.test(portable)) {
+    throw new Error(
+      `Comparison identity requires a relative path or an explicit id: ${value}`
+    );
+  }
+  return path.posix.normalize(portable);
+}
+function canonical(value) {
+  if (Array.isArray(value)) return value.map(canonical);
+  if (value !== null && typeof value === "object") {
+    return Object.fromEntries(
+      Object.keys(value).sort().map((key) => [key, canonical(value[key])])
+    );
+  }
+  return value;
+}
+function parseFixtures(raw, fixturePath) {
+  let fixtures;
+  try {
+    fixtures = FixturesSpecSchema.parse(JSON.parse(raw));
+  } catch (err) {
+    if (err instanceof ZodError) {
+      throw new Error(formatZodError(err, fixturePath));
+    }
+    throw err;
+  }
+  const fixture_id = fixtures.id === void 0 ? `path:${relativePath(fixturePath)}` : `id:${fixtures.id}`;
+  const contractIds = /* @__PURE__ */ new Set();
+  const contracts = fixtures.contracts.map((contract) => {
+    const logical_id = contract.id === void 0 ? `wasm:${relativePath(contract.wasm_path)}` : `id:${contract.id}`;
+    if (contractIds.has(logical_id)) {
+      throw new Error(
+        `Duplicate logical contract identity in ${fixture_id}: ${logical_id}`
+      );
+    }
+    contractIds.add(logical_id);
+    const caseIds = /* @__PURE__ */ new Set();
+    const invocations = contract.invocations.map((invocation) => {
+      const args = invocation.args.map((arg) => ({
+        type: arg.type.toLowerCase(),
+        value: canonical(arg.value)
+      }));
+      const case_id = invocation.id === void 0 ? `args:${JSON.stringify(args)}` : `id:${invocation.id}`;
+      const key = JSON.stringify([invocation.function_name, case_id]);
+      if (caseIds.has(key)) {
+        throw new Error(
+          `Duplicate benchmark identity in ${logical_id}: ${invocation.function_name} / ${case_id}. Set distinct invocation ids.`
+        );
+      }
+      caseIds.add(key);
+      return { ...invocation, case_id };
+    });
+    return { ...contract, logical_id, invocations };
+  });
+  return { ...fixtures, fixture_id, contracts };
+}
 
 // src/endpoint.ts
 var REDACTED_VALUE = "REDACTED";

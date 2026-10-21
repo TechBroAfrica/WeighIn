@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { Address } from "@stellar/stellar-sdk";
 import { METRIC_KEYS } from "./diff";
 
 // ---------------------------------------------------------------------------
@@ -169,6 +170,45 @@ export const InvocationArgSchema: z.ZodType<any> = z.lazy(() =>
           ctx.addIssue({
             code: z.ZodIssueCode.custom,
             message: err,
+            path: ["value"],
+          });
+        }
+      } else if (data.type === "address") {
+        if (typeof data.value !== "string") {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: "Invalid value for address: must be string",
+            path: ["value"],
+          });
+        } else {
+          try {
+            Address.fromString(data.value);
+          } catch (error: any) {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              message: `Invalid value for address: ${error.message}`,
+              path: ["value"],
+            });
+          }
+        }
+      } else if (data.type === "bytes") {
+        if (typeof data.value !== "string") {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: "Invalid value for bytes: must be valid hex",
+            path: ["value"],
+          });
+        } else if (!/^[0-9a-fA-F]*$/.test(data.value)) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: "Invalid value for bytes: must be valid hex",
+            path: ["value"],
+          });
+        } else if (data.value.length % 2 !== 0) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message:
+              "Invalid value for bytes: hex string must have even length",
             path: ["value"],
           });
         }

@@ -75,19 +75,34 @@ Invalid WeighIn configuration in weighin-fixtures.json:
 
 ---
 
-## What Remains Unconstrained
+## What Is Validated in Typed Argument Values
 
-The `value` field of a typed argument is typed as `z.any()`. Its contents are **not** validated
-at the declaration level. This means:
+The `value` field of a typed argument is typed as `z.any()` at the schema level, but
+`InvocationArgSchema.superRefine` runs additional checks before side effects for the following
+types:
 
-- A `vec` argument whose `value` is an array of well-formed typed arguments parses successfully.
-- A `map` argument whose `value` is an array of `{ key, value }` pairs of typed arguments parses
-  successfully.
-- Primitive `value` contents (strings, numbers, booleans, hex strings) are not constrained beyond
-  the large-integer string checks already in place for `u64`/`i64`/`u128`/`i128`.
+- **`u64` / `i64` / `u128` / `i128`** — value must be a valid integer string within the type's
+  range.
+- **`address`** — value must be a string, and must parse as a valid Stellar address (account or
+  contract). Invalid address strings are rejected with a `Invalid value for address:` message
+  that includes the full dot-notation JSON path.
+- **`bytes`** — value must be a string, must consist only of hexadecimal characters, and must have
+  even length. Invalid hex strings are rejected with a `Invalid value for bytes:` message that
+  includes the full dot-notation JSON path.
+- **`vec`** — value must be an array. Each element is recursively validated as a typed argument.
+  Errors from inner elements are reported with their index path prefixed (e.g.
+  `args.0.value.1.value`).
+- **`map`** — value must be an array of `{ key, value }` pairs. Both the key and the value of each
+  entry are recursively validated as typed arguments. Errors include the entry index and `key` or
+  `value` segment in the path (e.g. `args.0.value.0.key.value`).
 
-Full recursive validation of nested `vec` and `map` typed-argument contents is explicitly out of
-scope for this change and is planned as separate future work.
+These checks apply to both top-level arguments and arguments nested arbitrarily deep inside
+`vec`/`map` structures. A deeply nested invalid `address` or `bytes` value is rejected at parse
+time with the full contract/invocation/argument/index path, before any build, deployment, or
+simulation step.
+
+Primitive types whose SDK constructors accept any input without runtime error (`symbol`, `string`,
+`u32`, `i32`, `bool`) are not additionally constrained beyond type-key presence.
 
 ---
 
@@ -109,7 +124,9 @@ Common patterns that will now be rejected:
 
 ## Scope Note
 
-This change makes the **declaration objects** strict. It does not validate the internal structure
-of `vec` or `map` payload arrays beyond what was already validated by the existing `superRefine`
-logic in `InvocationArgSchema`. Full recursive strict validation of nested typed arguments is a
-separate work item.
+The declaration objects (`FixturesSpecSchema`, `ContractSpecSchema`, `InvocationSpecSchema`,
+`InvocationArgSchema`) remain strict: any unknown key at any declaration level is rejected
+immediately. The typed-argument value validation described above walks `vec` and `map` elements
+recursively before any side effects and reports errors with precise paths. Scalar value types
+whose SDK constructors accept arbitrary input without error (`symbol`, `string`, `u32`, `i32`,
+`bool`) are not additionally constrained by the schema.
