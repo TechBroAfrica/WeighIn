@@ -20,6 +20,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const os = require("node:os");
 const { spawnSync, execFileSync } = require("node:child_process");
+const { npmInstall } = require("../support/npm-install.cjs");
 
 const repoRoot = path.resolve(__dirname, "..", "..");
 const installTimeout = 900000;
@@ -122,9 +123,11 @@ function createConsumer(destination) {
 }
 
 function installGitDependency(consumerDir, spec) {
-  return spawnSync("npm", ["install", "--no-audit", "--no-fund", spec], {
+  // `--prefer-offline` resolves the locked dependency graph from the npm cache
+  // that CI restores, so the install does not depend on a burst of registry
+  // requests that the shared runner IP can have throttled.
+  return npmInstall(["--prefer-offline", "--no-audit", "--no-fund", spec], {
     cwd: consumerDir,
-    encoding: "utf8",
     timeout: installTimeout,
   });
 }

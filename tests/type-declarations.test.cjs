@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const { spawnSync } = require('node:child_process');
+const { npmInstall } = require('./support/npm-install.cjs');
 
 const repoRoot = path.resolve(__dirname, '..');
 const pkg = require('../package.json');
@@ -39,11 +40,13 @@ before(() => {
     path.join(consumerDir, 'package.json'),
     JSON.stringify({ name: 'typed-consumer', private: true, version: '1.0.0' }),
   );
-  const install = spawnSync('npm', ['install', '--no-audit', '--no-fund', '--omit=dev', tarballPath], {
-    cwd: consumerDir,
-    encoding: 'utf8',
-    timeout: 120000,
-  });
+  const install = npmInstall(
+    ['--prefer-offline', '--no-audit', '--no-fund', '--omit=dev', tarballPath],
+    {
+      cwd: consumerDir,
+      timeout: 120000,
+    },
+  );
   assert.equal(install.status, 0, `npm install failed: ${install.stderr}`);
   // A Node consumer provides its own Node typings; reuse the pinned dev copy offline.
   fs.mkdirSync(path.join(consumerDir, 'node_modules/@types'), { recursive: true });

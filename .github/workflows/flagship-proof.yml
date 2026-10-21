@@ -30,21 +30,32 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
+          # The tests install real packages. Restoring the npm cache keeps
+          # those installs off a cold registry, which the three parallel
+          # matrix jobs would otherwise all hit at the same time.
+          cache: npm
       - uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0
         with:
           toolchain: '1.95.0'
           targets: wasm32v1-none
       - name: Fetch locked native helper crates
         run: cargo +1.95.0 fetch --locked --manifest-path native/simulation/Cargo.toml
-      - name: Install dependencies and validate source
+      - name: Install dependencies
+        run: npm ci
+      - name: Validate source
         run: |
-          npm ci
+          npm run lint
+          npm run typecheck
           npm test
-          npm run test:native
+      - name: Validate the native helper
+        run: npm run test:native
+      - name: Verify committed bundles
+        run: |
           npm run build
           npm run bundle
           git diff --exit-code -- bundled/index.js
-          npm pack --dry-run --json
+      - name: Verify the package can be packed
+        run: npm pack --dry-run --json
       - name: Install checksum-verified Stellar CLI
         run: |
           curl -fsSL https://github.com/stellar/stellar-cli/releases/download/v28.1.0/stellar-cli-28.1.0-x86_64-unknown-linux-gnu.tar.gz -o "$RUNNER_TEMP/stellar-cli.tar.gz"

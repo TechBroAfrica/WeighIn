@@ -4,6 +4,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const os = require("node:os");
 const { spawnSync } = require("node:child_process");
+const { npmInstall } = require("./support/npm-install.cjs");
 
 const repoRoot = path.resolve(__dirname, "..");
 const requiredPackagedEntries = [
@@ -73,12 +74,10 @@ test("pack using normal lifecycle and verify installed consumer public API and C
       version: "1.0.0",
     }),
   );
-  const installResult = spawnSync(
-    "npm",
-    ["install", "--no-audit", "--no-fund", tarballPath],
+  const installResult = npmInstall(
+    ["--prefer-offline", "--no-audit", "--no-fund", tarballPath],
     {
       cwd: consumerDir,
-      encoding: "utf8",
       timeout: 60000,
     },
   );

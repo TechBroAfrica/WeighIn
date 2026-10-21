@@ -4,6 +4,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { execFileSync } = require("node:child_process");
+const { npmInstall } = require("./support/npm-install.cjs");
 
 const root = path.resolve(__dirname, "..");
 
@@ -43,10 +44,8 @@ test("a clean packed consumer receives the inventory, bundles, native locks, and
     // The consumer install prefers the npm cache but may fall back to the
     // registry: a cold CI cache holds the locked tarballs but not the
     // registry metadata npm resolves version ranges from.
-    execFileSync(
-      "npm",
+    npmInstall(
       [
-        "install",
         "--prefer-offline",
         "--ignore-scripts",
         "--no-audit",
