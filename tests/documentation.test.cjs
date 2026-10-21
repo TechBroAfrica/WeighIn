@@ -48,3 +48,32 @@ test('documented Action inputs, outputs and workflow snippets use supported name
   for (const file of mainDocs) for (const match of read(file).matchAll(/npm run ([a-z][a-z0-9:-]*)/g)) assert.ok(scripts[match[1]], `${file}: ${match[1]}`);
   for (const workflow of fs.readdirSync(path.join(root, '.github/workflows'))) yaml.parse(read(`.github/workflows/${workflow}`));
 });
+
+test('documented npm git-dependency installation matches the verified lifecycle behavior', () => {
+  const readme = read('README.md');
+  const contributing = read('CONTRIBUTING.md');
+  for (const [name, text] of [['README.md', readme], ['CONTRIBUTING.md', contributing]]) {
+    // The package is not on the npm registry, so the documented command must
+    // pin an immutable commit of the repository.
+    assert.match(
+      text,
+      /npm install git\+https:\/\/github\.com\/WeighInNG\/WeighIn\.git#<[^>]+>/,
+      `${name} must document the verified git dependency command`,
+    );
+    assert.match(text, /not published to the npm registry/i, `${name} must state the registry status`);
+    assert.match(text, /prepare/, `${name} must document the prepare lifecycle`);
+  }
+  // `prepack` is not executed for git dependency installs and `prepare` must not
+  // run the dependency inventory, which needs the Cargo toolchain.
+  assert.match(contributing, /prepack/);
+  assert.match(contributing, /Cargo/);
+  assert.match(contributing, /npm run test:integration/);
+  assert.ok(
+    fs.existsSync(
+      path.join(root, 'tests', 'integration', 'git-dependency-install.test.cjs'),
+    ),
+    'the documented reproducible check must exist',
+  );
+  assert.match(contributing, /WEIGHIN_GIT_INSTALL_URL/);
+  assert.match(contributing, /WEIGHIN_GIT_INSTALL_SHA/);
+});

@@ -148,6 +148,25 @@ unversioned metadata and that pinned consumer accepts it. The examples here keep
 that verified legacy pin; do not pair a legacy producer with the v1 consumer and
 do not repin these examples to an unverified revision.
 
+## Install as a dependency
+
+The package is not published to the npm registry. Consumers that need the
+measurement API or the CLI install it from the repository, pinned to an
+immutable commit SHA of a reviewed revision:
+
+```bash
+npm install git+https://github.com/WeighInNG/WeighIn.git#<commit-sha>
+```
+
+npm fetches that revision, runs the `prepare` script on it to generate the
+`dist/` entrypoints and the Action bundles, and packs the result. The
+installed package exposes `main` (`dist/measurement.js`), `types`
+(`dist/measurement.d.ts`) and the `weighin` CLI (`dist/cli.js`). Pin a commit
+SHA rather than a branch name, and do not install with `--ignore-scripts`,
+because that skips the generation step. See
+[CONTRIBUTING.md](CONTRIBUTING.md#npm-git-dependency-installation) for the
+verified npm lifecycle, the reproducibility check and the limitations.
+
 ## Configuration
 
 All supported inputs are declared in [action.yml](action.yml):

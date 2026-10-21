@@ -15,6 +15,67 @@ cd WeighIn
 npm ci
 ```
 
+### npm git-dependency installation
+
+The package is not published to the npm registry, so the supported way to
+consume it as an npm dependency is a git dependency pinned to an immutable
+commit SHA of a reviewed revision:
+
+```bash
+npm install git+https://github.com/WeighInNG/WeighIn.git#<commit-sha>
+```
+
+npm resolves that spec by fetching the pinned revision (a git clone, or the
+hosted commit archive), installing `dependencies` and `devDependencies` into
+it, running the `prepare` script there, and only then packing it with the
+`files` allowlist. Verified with Node 24.11.1 and npm 11.6.2, that lifecycle
+runs `prepare` (twice; the second run is a no-op) and does not run `prepack`.
+
+`prepare` runs `npm run build` and `npm run bundle`, so the packed artifact
+contains the `dist/` entrypoints declared by `main`, `types` and `bin` plus the
+Action bundles. `dist/` is gitignored and therefore absent from a clone, so
+without `prepare` npm would exit 0 and install a package whose declared
+entrypoints do not exist. `prepack` runs `npm run build && npm run bundle &&
+node dist/dependency-inventory.js --quiet` for `npm pack` and `npm publish`; it
+is not executed for git dependency installs, and the dependency inventory is
+deliberately excluded from `prepare` because it requires the Cargo toolchain.
+
+`prepare` also regenerates the `provenance-manifest.json` of the installed
+artifact from the artifacts it just built, so that artifact records the
+environment that produced it. Its `source_revision` is the pinned revision when
+npm clones the repository with its git metadata. npm extracts a hosted commit
+archive (for example `codeload.github.com/WeighInNG/WeighIn/tar.gz/<commit>`)
+without git metadata, and the field is then `unavailable` rather than an
+unverifiable value.
+
+Limitations:
+
+- Pin a commit SHA. Branch names are mutable, so the installed revision would
+  not be the reviewed one.
+- `--ignore-scripts` skips `prepare` and yields a package without `dist/` that
+  cannot be loaded or executed.
+- The install downloads the build toolchain (TypeScript, esbuild) as
+  `devDependencies`, and needs access to the GitHub repository and the npm
+  registry.
+
+The reproducible isolated-consumer check installs from an immutable revision of
+a local git fixture through the same npm git-dependency path:
+
+```bash
+npm run test:integration
+```
+
+It runs before the other Node tests, because it performs real installs and
+builds and would otherwise compete with them for the machine. To verify the
+hosted repository instead, set the repository URL and an immutable commit SHA of
+a revision that contains the `prepare` script:
+
+```bash
+WEIGHIN_GIT_INSTALL_URL=git+https://github.com/WeighInNG/WeighIn.git \
+WEIGHIN_GIT_INSTALL_SHA=<commit-sha> \
+npm run test:integration
+```
+
 JavaScript tests do not need Docker or a live RPC. Native replay/integration needs
 Linux x64, Rust 1.95.0 and native build prerequisites. Contract integration also
 needs `wasm32v1-none`, checksum-verified Stellar CLI 28.1.0 and Docker. Provision

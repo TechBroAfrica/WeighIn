@@ -8,13 +8,15 @@
     "weighin": "dist/cli.js"
   },
   "scripts": {
+    "prepare": "node scripts/prepare-package.cjs",
     "prepack": "npm run build && npm run bundle && node dist/dependency-inventory.js --quiet",
     "build": "tsc",
     "bundle": "tsc --noEmit && esbuild src/action.ts --bundle --platform=node --target=node20 --outfile=bundled/index.js --format=cjs && esbuild src/comment-action.ts --bundle --platform=node --target=node20 --outfile=bundled/comment-action.js --format=cjs && node scripts/package-provenance.cjs",
     "provenance": "node scripts/package-provenance.cjs --verify",
     "inventory:generate": "npm run build && node dist/dependency-inventory.js",
     "inventory:check": "npm run build && node dist/dependency-inventory.js --check",
-    "test": "npm run build && node --test tests/*.test.cjs && npm run test:vitest",
+    "test": "npm run build && npm run test:integration && node --test tests/*.test.cjs && npm run test:vitest",
+    "test:integration": "node --test tests/integration/git-dependency-install.test.cjs",
     "test:vitest": "vitest run test/*.test.ts",
     "test:watch": "vitest test/*.test.ts",
     "test:native": "npm run build && npm run build:helper && node --test tests/native/*.test.cjs",
