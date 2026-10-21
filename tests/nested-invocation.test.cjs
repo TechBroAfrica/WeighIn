@@ -55,19 +55,36 @@ test('retained nested-invocation evidence has intact sources, wasm hashes and a 
 });
 
 test('fixture templates declare explicit identities and the caller binds the callee address token', () => {
+  // Callee template contains no address arguments; parseFixtures validates it directly.
   const callee = parseFixtures(fixtureTemplate('callee-fixtures.json'), 'callee-fixtures.json');
-  const caller = parseFixtures(fixtureTemplate('caller-fixtures.json'), 'caller-fixtures.json');
-  const failure = parseFixtures(fixtureTemplate('caller-failure-fixtures.json'), 'caller-failure-fixtures.json');
   assert.equal(callee.contracts[0].logical_id, 'id:callee');
   assert.equal(callee.contracts[0].invocations[0].case_id, 'id:work-once');
   assert.equal(callee.contracts[0].invocations[0].function_name, 'work');
+
+  // Caller and failure templates contain a {{NESTED_CALLEE_ADDRESS}} placeholder that is
+  // only valid after token substitution. Read the template JSON directly to verify the
+  // template shape; do not pass the unsubstituted address through parseFixtures.
+  const callerSpec = JSON.parse(fixtureTemplate('caller-fixtures.json'));
+  const failureSpec = JSON.parse(fixtureTemplate('caller-failure-fixtures.json'));
+  assert.equal(callerSpec.contracts[0].id, 'caller');
+  assert.equal(callerSpec.contracts[0].invocations[0].id, 'nested-work');
+  assert.equal(callerSpec.contracts[0].invocations[0].function_name, 'run');
+  assert.equal(callerSpec.contracts[0].invocations[0].args[0].type, 'address');
+  assert.equal(callerSpec.contracts[0].invocations[0].args[0].value, '{{NESTED_CALLEE_ADDRESS}}');
+  assert.equal(failureSpec.contracts[0].invocations[0].function_name, 'run_failing');
+  assert.equal(failureSpec.contracts[0].invocations[0].args[0].value, '{{NESTED_CALLEE_ADDRESS}}');
+
+  // After substitution with a valid address, parseFixtures must accept the caller template.
+  const { StrKey } = require('@stellar/stellar-sdk');
+  const substitutedAddress = StrKey.encodeContract(Buffer.alloc(32, 5));
+  const substituted = fixtureTemplate('caller-fixtures.json')
+    .replace('{{NESTED_BUILD_DIR}}', 'build-dir')
+    .replace(/\{\{NESTED_CALLEE_ADDRESS\}\}/g, substitutedAddress);
+  const caller = parseFixtures(substituted, 'caller-fixtures.json');
   assert.equal(caller.contracts[0].logical_id, 'id:caller');
   assert.equal(caller.contracts[0].invocations[0].case_id, 'id:nested-work');
-  assert.equal(caller.contracts[0].invocations[0].function_name, 'run');
-  assert.equal(caller.contracts[0].invocations[0].args[0].type, 'address');
-  assert.equal(caller.contracts[0].invocations[0].args[0].value, '{{NESTED_CALLEE_ADDRESS}}');
-  assert.equal(failure.contracts[0].invocations[0].function_name, 'run_failing');
-  assert.equal(failure.contracts[0].invocations[0].args[0].value, '{{NESTED_CALLEE_ADDRESS}}');
+  assert.equal(caller.contracts[0].invocations[0].args[0].value, substitutedAddress);
+
   for (const spec of [fixtureTemplate('callee-fixtures.json'), fixtureTemplate('caller-fixtures.json'), fixtureTemplate('caller-failure-fixtures.json')]) {
     assert.doesNotThrow(() => validateConfig({ thresholds: { functions: Object.fromEntries(JSON.parse(spec).contracts[0].invocations.map(invocation => [invocation.function_name, { cpu_instructions: 'strict_zero_tolerance' }])) } }));
   }
