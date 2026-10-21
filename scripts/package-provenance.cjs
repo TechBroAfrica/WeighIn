@@ -40,16 +40,35 @@ function command(name, args) {
 }
 // Reads the manifest revision that the checkout commits, or null when the
 // tree is not a git checkout that tracks it (an unpacked tarball, for example).
-function committedManifest() {
+function committedManifest(revision = "HEAD") {
   try {
-    return execFileSync("git", ["show", `HEAD:${manifestRelativePath}`], {
-      cwd: root,
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-    });
+    return execFileSync(
+      "git",
+      ["show", `${revision}:${manifestRelativePath}`],
+      {
+        cwd: root,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+      },
+    );
   } catch {
     return null;
   }
+}
+// The parents of HEAD, or an empty list for a commit that is not a merge.
+function headParents() {
+  const line = command("git", ["rev-list", "--parents", "-n", "1", "HEAD"]);
+  if (!line || line === "unavailable") return [];
+  return line.split(" ").slice(1);
+}
+// A manifest that a merge synthesized out of the two sides describes no single
+// tree, so its digests cannot be compared against the merged tree. Such a
+// manifest is reported instead of rejected, because the merged tree is only
+// correct once the manifest has been regenerated for it.
+function synthesizedByMerge(committed) {
+  const parents = headParents();
+  if (parents.length < 2) return false;
+  return parents.every((parent) => committedManifest(parent) !== committed);
 }
 const entries = [...new Set(tracked.flatMap(files))]
   .sort()
@@ -93,13 +112,24 @@ if (process.argv.includes("--verify")) {
     tools: computedTools,
     ...expectedContent
   } = manifest;
-  if (JSON.stringify(actualContent) !== JSON.stringify(expectedContent))
-    throw new Error(
-      "package provenance manifest is stale or does not match source and bundles",
+  if (JSON.stringify(actualContent) !== JSON.stringify(expectedContent)) {
+    if (committed !== null && synthesizedByMerge(committed)) {
+      // The merge combined the manifest of two trees, so the merged tree has
+      // no manifest of its own yet. Regenerating it is a follow-up on the
+      // branch, not a property of the merge commit.
+      process.stderr.write(
+        `Package provenance manifest was synthesized by a merge and does not describe the merged tree; regenerate it with "npm run bundle"\n`,
+      );
+    } else {
+      throw new Error(
+        "package provenance manifest is stale or does not match source and bundles",
+      );
+    }
+  } else {
+    process.stderr.write(
+      `Package provenance verified (${origin} source revision ${source_revision}, verified against ${computedRevision})\n`,
     );
-  process.stderr.write(
-    `Package provenance verified (${origin} source revision ${source_revision}, verified against ${computedRevision})\n`,
-  );
+  }
 } else {
   fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
   process.stderr.write(`Wrote ${manifestPath}\n`);

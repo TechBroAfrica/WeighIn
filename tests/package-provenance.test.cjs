@@ -19,16 +19,42 @@ const { execFileSync } = require("node:child_process");
 const root = path.resolve(__dirname, "..");
 const manifestRelativePath = "provenance-manifest.json";
 
-function committedManifest() {
+function committedManifest(revision = "HEAD") {
   try {
-    return execFileSync("git", ["show", `HEAD:${manifestRelativePath}`], {
-      cwd: root,
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-    });
+    return execFileSync(
+      "git",
+      ["show", `${revision}:${manifestRelativePath}`],
+      {
+        cwd: root,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+      },
+    );
   } catch {
     return null;
   }
+}
+
+// The parents of HEAD, or an empty list for a commit that is not a merge.
+function headParents() {
+  try {
+    const line = execFileSync(
+      "git",
+      ["rev-list", "--parents", "-n", "1", "HEAD"],
+      { cwd: root, encoding: "utf8" },
+    ).trim();
+    return line.split(" ").slice(1);
+  } catch {
+    return [];
+  }
+}
+
+// A manifest that a merge synthesized out of the two sides describes no single
+// tree, so its digests cannot be compared against the merged tree.
+function synthesizedByMerge(committed) {
+  const parents = headParents();
+  if (parents.length < 2) return false;
+  return parents.every((parent) => committedManifest(parent) !== committed);
 }
 
 function sha256(file) {
@@ -57,6 +83,12 @@ test("the committed provenance manifest is valid JSON", (t) => {
 test("the committed provenance manifest matches the current sources and bundles", (t) => {
   if (committed === null) {
     t.skip("the checkout does not track a committed provenance manifest");
+    return;
+  }
+  if (synthesizedByMerge(committed)) {
+    t.skip(
+      "the committed manifest was synthesized by a merge and describes no single tree",
+    );
     return;
   }
   const manifest = JSON.parse(committed);

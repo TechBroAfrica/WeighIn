@@ -10,6 +10,9 @@ contract/target/
 .weighin-temp-key
 weighin-results.json
 
+# CI audit report artifact
+npm-audit.json
+
 # Misc
 *.tar.bz2
 *.tar.gz
