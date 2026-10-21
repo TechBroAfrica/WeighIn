@@ -1,5 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { rpc } from "@stellar/stellar-sdk";
+import { Keypair, rpc, xdr } from "@stellar/stellar-sdk";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import {
   SourceAccountVariantListSchema,
   assertHeldFixed,
@@ -201,15 +204,75 @@ describe("source-account measurement", () => {
 
   it("rejects a source account that does not exist on the network", async () => {
     const original = rpc.Server.prototype.getAccount;
+    const originalFetch = globalThis.fetch;
+    const tempDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "weighin-source-account-test-"),
+    );
+    const keypair = Keypair.random();
+    const keyFile = path.join(tempDir, "deployer.key");
+    const fixturesPath = path.join(tempDir, "fixtures.json");
+    fs.writeFileSync(keyFile, keypair.secret(), { mode: 0o600 });
+    fs.writeFileSync(
+      path.join(tempDir, "contract.wasm"),
+      Buffer.from("test wasm"),
+    );
+    fs.writeFileSync(
+      fixturesPath,
+      JSON.stringify({
+        contracts: [
+          {
+            id: "source-account-test",
+            wasm_path: "contract.wasm",
+            invocations: [
+              { id: "constant", function_name: "constant_probe", args: [] },
+            ],
+          },
+        ],
+      }),
+    );
+    const accountRows =
+      require("../docs/experiments/fixture-migration/bridge/rpc.json").flatMap(
+        (capture: any) => capture.raw.result?.entries || [],
+      );
+    const accountRow = accountRows.find((entry: any) => {
+      try {
+        return (
+          xdr.LedgerEntryData.fromXDR(entry.xdr, "base64").switch().name ===
+          "account"
+        );
+      } catch {
+        return false;
+      }
+    });
+    const accountValue = xdr.LedgerEntryData.fromXDR(accountRow.xdr, "base64");
+    accountValue.account().accountId(keypair.xdrPublicKey());
+    globalThis.fetch = (async (_input, init) => {
+      const request = JSON.parse(String(init?.body));
+      return new Response(
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: request.id,
+          result: {
+            latestLedger: 100,
+            entries: [
+              {
+                key: request.params.keys[0],
+                xdr: accountValue.toXDR("base64"),
+              },
+            ],
+          },
+        }),
+      );
+    }) as typeof globalThis.fetch;
     rpc.Server.prototype.getAccount = (async () => {
       throw new Error("Account not found");
     }) as typeof rpc.Server.prototype.getAccount;
     try {
       await expect(
         measureSourceAccountEffects({
-          fixturesPath:
-            "tests/fixtures/source-account/source-account-fixtures.json",
+          fixturesPath,
           rpcUrl: "http://localhost:8000/rpc",
+          keyFile,
           sourceAccounts: [
             { label: "missing", public_key: ACCOUNT_A },
             { label: "unused", public_key: ACCOUNT_B },
@@ -218,6 +281,8 @@ describe("source-account measurement", () => {
       ).rejects.toThrow(/is not available on the network/);
     } finally {
       rpc.Server.prototype.getAccount = original;
+      globalThis.fetch = originalFetch;
+      fs.rmSync(tempDir, { recursive: true, force: true });
     }
   });
 });

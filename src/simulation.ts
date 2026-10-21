@@ -458,13 +458,24 @@ export async function simulateSnapshot(
   helperPath: string,
   signal?: AbortSignal,
 ): Promise<SimulationOutput> {
-  const stdout = await execute(
-    helperPath,
-    [],
-    JSON.stringify(input),
-    undefined,
-    signal,
-  );
+  let stdout: string;
+  try {
+    stdout = await execute(
+      helperPath,
+      [],
+      JSON.stringify(input),
+      undefined,
+      signal,
+    );
+  } catch (failure) {
+    // The helper reports a structured failure envelope on stdout. Surface its
+    // status and message instead of the generic helper error text.
+    const envelope = parseHelperFailure(failure);
+    if (envelope) {
+      throw new Error(`Native helper ${envelope.status}: ${envelope.message}`);
+    }
+    throw failure;
+  }
   let output: SimulationOutput;
   try {
     output = outputSchema.parse(JSON.parse(stdout));

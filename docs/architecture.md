@@ -167,6 +167,16 @@ metric sources/caps, both revisions' provenance, deltas, additions/removals and
 violations. `src/report.ts` writes optional Markdown and PR metadata; metadata
 is written only for PR events. The same report goes to `GITHUB_STEP_SUMMARY`.
 
+The Markdown report is delivered atomically. `src/report.ts` writes the complete
+body to a temporary file it creates exclusively (`O_CREAT | O_EXCL`) in the
+destination directory, closes that handle and renames the temporary file over
+the destination. The destination is therefore replaced only after a complete
+write, so a failed or interrupted delivery keeps a previously published report
+and never publishes a partial one. Cleanup removes only the temporary file the
+failing run created; a concurrent writer's temporary file is never touched. A
+cleanup failure is reported as a warning and never masks the original write or
+rename error.
+
 The PR metadata artifact is versioned (`src/pr-metadata.ts`). The producer writes
 `schemaVersion`, the base `repository`, `prNumber` and `headSha`; a fork PR still
 records the base repository. The consumer validates the version, repository

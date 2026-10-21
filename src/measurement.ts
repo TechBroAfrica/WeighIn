@@ -475,19 +475,116 @@ export async function isContractDeployed(
   server: rpc.Server,
   contractId: string,
 ): Promise<boolean> {
+  const contractScAddress = Address.fromString(contractId).toScAddress();
+  const ledgerKey = xdr.LedgerKey.contractData(
+    new xdr.LedgerKeyContractData({
+      contract: contractScAddress,
+      key: xdr.ScVal.scvLedgerKeyContractInstance(),
+      durability: xdr.ContractDataDurability.persistent(),
+    }),
+  );
+
   try {
-    const contractScAddress = Address.fromString(contractId).toScAddress();
-    const ledgerKey = xdr.LedgerKey.contractData(
-      new xdr.LedgerKeyContractData({
-        contract: contractScAddress,
-        key: xdr.ScVal.scvLedgerKeyContractInstance(),
-        durability: xdr.ContractDataDurability.persistent(),
-      }),
-    );
     const res = await server.getLedgerEntries(ledgerKey);
-    return !!(res.entries && res.entries.length > 0);
-  } catch {
-    return false;
+    if (
+      !res ||
+      typeof res !== "object" ||
+      !Array.isArray((res as any).entries)
+    ) {
+      throw new Error(
+        `Deployment probe returned an invalid ledger response: ${JSON.stringify(res)}`,
+      );
+    }
+
+    if (res.entries.length === 0) return false;
+    if (res.entries.length > 1) {
+      throw new Error(
+        `Deployment probe returned ${res.entries.length} entries for ${contractId}; expected at most one matching contract instance`,
+      );
+    }
+
+    const entry = res.entries[0] as any;
+    if (!entry || typeof entry !== "object") {
+      throw new Error(
+        `Deployment probe returned a malformed entry for ${contractId}: ${JSON.stringify(entry)}`,
+      );
+    }
+    const entryKey =
+      typeof entry.key === "string"
+        ? entry.key
+        : typeof entry.key?.toXDR === "function"
+          ? entry.key.toXDR("base64")
+          : undefined;
+    const entryValue = entry.xdr ?? entry.val;
+    const entryXdr =
+      typeof entryValue === "string"
+        ? entryValue
+        : typeof entryValue?.toXDR === "function"
+          ? entryValue.toXDR("base64")
+          : undefined;
+    if (typeof entryKey !== "string" || typeof entryXdr !== "string") {
+      throw new Error(
+        `Deployment probe returned a missing key/xdr payload for ${contractId}: ${JSON.stringify(entry)}`,
+      );
+    }
+    if (entryKey !== ledgerKey.toXDR("base64")) {
+      throw new Error(
+        `Deployment probe returned an unrelated ledger entry for ${contractId}; expected instance key ${ledgerKey.toXDR("base64")}, got ${entryKey}`,
+      );
+    }
+
+    let ledgerEntry: xdr.LedgerEntryData;
+    try {
+      ledgerEntry = xdr.LedgerEntryData.fromXDR(entryXdr, "base64");
+    } catch (error: any) {
+      throw new Error(
+        `Deployment probe returned invalid XDR for ${contractId}: ${error.message}`,
+      );
+    }
+
+    if (ledgerEntry.switch().name !== "contractData") {
+      throw new Error(
+        `Deployment probe returned ${ledgerEntry.switch().name} for ${contractId}; expected contractData`,
+      );
+    }
+
+    const contractData = ledgerEntry.contractData();
+    if (!contractData) {
+      throw new Error(
+        `Deployment probe returned a contractData record without payload for ${contractId}`,
+      );
+    }
+    const instanceKey = contractData.key();
+    if (
+      instanceKey.toXDR("base64") !==
+      xdr.ScVal.scvLedgerKeyContractInstance().toXDR("base64")
+    ) {
+      throw new Error(
+        `Deployment probe returned a non-instance contractData entry for ${contractId}`,
+      );
+    }
+    if (
+      contractData.contract().toXDR("base64") !==
+      contractScAddress.toXDR("base64")
+    ) {
+      throw new Error(
+        `Deployment probe returned a different contract for ${contractId}; expected ${contractScAddress.toXDR("base64")}`,
+      );
+    }
+
+    return true;
+  } catch (error: any) {
+    if (
+      error instanceof Error &&
+      error.message.startsWith("Deployment probe")
+    ) {
+      throw error;
+    }
+    throw new Error(
+      `Deployment probe failed for contract ${contractId}: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
   }
 }
 
