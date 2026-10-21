@@ -42,6 +42,18 @@ be byte-identical to the committed bundles. The manifest is rewritten by
 `npm run bundle`, so its informational fields are not expected to match the
 checkout that CI performs.
 
+The verification reads the manifest revision that the checkout commits, not the
+working-tree copy. `npm run bundle` regenerates that copy, and `npm ci` runs
+the bundle through the `prepare` lifecycle, so verifying the working-tree copy
+would accept a committed manifest that is broken or stale. A committed manifest
+that is not valid JSON fails verification, and so does a committed manifest
+whose digests do not describe the checked-out tree.
+
+A merge can combine the manifest of two trees into a manifest that describes
+neither, because the manifest is a generated per-tree file. Such a manifest is
+reported rather than rejected, and the branch regenerates it with
+`npm run bundle` after the merge.
+
 The manifest is evidence, not a signature. A release system should sign this
 manifest or attach it using the platform's standard artifact-attestation
 mechanism (for example GitHub artifact attestations with least-privilege OIDC
